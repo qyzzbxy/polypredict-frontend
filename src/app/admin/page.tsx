@@ -87,8 +87,13 @@ export default function AdminPage() {
         console.log("No markets found");
       }
     } catch (error) {
-      console.error("Failed to load markets:", error);
-      setError(`Failed to load markets: ${error.message || "Unknown error"}`);
+      if (error instanceof Error) {
+        console.error("Failed to load markets:", error.message);
+        setError(`Failed to load markets: ${error.message}`);
+      } else {
+        console.error("Failed to load markets:", error);
+        setError("Failed to load markets: Unknown error");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -124,7 +129,11 @@ export default function AdminPage() {
       setDuration("86400");
       loadMarkets();
     } catch (error) {
-      console.error(error);
+      if (error instanceof Error) {
+        console.error(error.message);
+      } else {
+        console.error(error);
+      }
       alert("❌ Failed to create market");
     }
   };
@@ -159,7 +168,11 @@ export default function AdminPage() {
       setSelectedMarketId(null);
       loadMarkets();
     } catch (error) {
-      console.error(error);
+      if (error instanceof Error) {
+        console.error(error.message);
+      } else {
+        console.error(error);
+      }
       alert("❌ Failed to resolve market");
     }
   };
@@ -177,7 +190,11 @@ export default function AdminPage() {
       setSelectedMarketId(null);
       loadMarkets();
     } catch (error) {
-      console.error(error);
+      if (error instanceof Error) {
+        console.error(error.message);
+      } else {
+        console.error(error);
+      }
       alert("❌ Failed to cancel market");
     }
   };
