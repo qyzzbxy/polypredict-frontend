@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "target": "ES2020",                                // ✅ 升级以支持 BigInt 字面量
+    "lib": ["dom", "dom.iterable", "ES2020"],          // ✅ 确保使用 ES2020 标准库
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,

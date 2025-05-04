@@ -15,7 +15,8 @@ export default function MarketsPage() {
   const [error, setError] = useState(null);
   const [markets, setMarkets] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [showAllMarkets, setShowAllMarkets] = useState(true); // 默认显示所有市场
+  const [showCancelledMarkets, setShowCancelledMarkets] = useState(false); // 默认关闭
+  const [showResolvedMarkets, setShowResolvedMarkets] = useState(false); // 默认关闭
   
   // Default market parameters
   const DEFAULT_QUESTION = "Will ETH price exceed $5,000 by the end of 2025?";
@@ -37,19 +38,19 @@ export default function MarketsPage() {
     setError(null);
 
     try {
-      // Try to get markets with IDs 1-20 (increased range)
+      // Try to get markets with IDs starting from 1
       const marketsList = [];
-      let consecutiveFailures = 0;
-      const MAX_CONSECUTIVE_FAILURES = 5;
+      let id = 1;
+      let firstNonExisting = false;
       
-      for (let i = 1; i <= 20; i++) {
+      while (!firstNonExisting) {
         try {
-          console.log(`Attempting to load market ID: ${i}`);
+          console.log(`Attempting to load market ID: ${id}`);
           // Use your contract's getMarket function from PredictionMarket.sol
-          const market = await contracts.predictionMarket.getMarket(i);
+          const market = await contracts.predictionMarket.getMarket(id);
           
-          console.log(`Market ${i} data:`, market);
-          console.log(`Market ${i} status:`, Number(market.status));
+          console.log(`Market ${id} data:`, market);
+          console.log(`Market ${id} status:`, Number(market.status));
           
           // 在这里确保状态被正确解析
           const status = Number(market.status);
@@ -57,7 +58,7 @@ export default function MarketsPage() {
           const cancelled = status === 2;
           
           marketsList.push({
-            id: i,
+            id: id,
             question: market.question,
             outcomes: market.outcomes,
             endTime: Number(market.endTime),
@@ -67,17 +68,10 @@ export default function MarketsPage() {
             outcomeIndex: Number(market.resolvedOutcomeIndex)
           });
           
-          // 重置连续失败计数
-          consecutiveFailures = 0;
+          id++;
         } catch (err) {
-          console.log(`Market ${i} not found or error:`, err);
-          consecutiveFailures++;
-          
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            console.log(`${MAX_CONSECUTIVE_FAILURES} consecutive markets not found, stopping search.`);
-            break;
-          }
-          // Continue to next market
+          console.log(`Market ${id} not found, ending search:`, err);
+          firstNonExisting = true;
         }
       }
 
@@ -171,14 +165,21 @@ export default function MarketsPage() {
     }
   };
 
-  // Get filtered markets based on visibility setting
+  // Get filtered markets based on visibility settings
   const getFilteredMarkets = () => {
-    if (showAllMarkets) {
-      return markets;
-    } else {
-      // Only show active markets (status 0)
-      return markets.filter(market => market.status === 0);
+    let filtered = markets;
+    
+    // Filter out cancelled markets if not showing them
+    if (!showCancelledMarkets) {
+      filtered = filtered.filter(market => market.status !== 2);
     }
+    
+    // Filter out resolved markets if not showing them  
+    if (!showResolvedMarkets) {
+      filtered = filtered.filter(market => market.status !== 1);
+    }
+    
+    return filtered;
   };
 
   const filteredMarkets = getFilteredMarkets();
@@ -204,18 +205,29 @@ export default function MarketsPage() {
         </div>
       )}
 
-      {/* Market filter toggle */}
+      {/* Market filter toggles */}
       {markets.length > 0 && (
         <div className="flex mb-4 items-center">
-          <label className="inline-flex items-center cursor-pointer">
+          <label className="inline-flex items-center cursor-pointer mr-6">
             <input
               type="checkbox"
-              checked={showAllMarkets}
-              onChange={() => setShowAllMarkets(!showAllMarkets)}
+              checked={showCancelledMarkets}
+              onChange={() => setShowCancelledMarkets(!showCancelledMarkets)}
               className="sr-only peer"
             />
             <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
             <span className="ml-3 text-sm font-medium text-gray-900">Show Cancelled Markets</span>
+          </label>
+          
+          <label className="inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showResolvedMarkets}
+              onChange={() => setShowResolvedMarkets(!showResolvedMarkets)}
+              className="sr-only peer"
+            />
+            <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            <span className="ml-3 text-sm font-medium text-gray-900">Show Resolved Markets</span>
           </label>
           
           <button
@@ -298,11 +310,11 @@ export default function MarketsPage() {
           <div className="mt-8 text-center">
             <p className="text-sm text-gray-500">
               Click on any market to view details and place orders
-              {!showAllMarkets && markets.some(m => m.status === 2) && (
+              {(!showCancelledMarkets || !showResolvedMarkets) && (
                 <>
                   <br />
                   <span className="text-gray-400">
-                    {markets.filter(m => m.status === 2).length} cancelled markets are hidden. Toggle the switch above to view them.
+                    {markets.filter(m => (!showCancelledMarkets && m.status === 2) || (!showResolvedMarkets && m.status === 1)).length} markets are hidden. Toggle the switches above to view them.
                   </span>
                 </>
               )}

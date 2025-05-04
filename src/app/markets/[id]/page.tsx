@@ -6,627 +6,687 @@ import { useParams, useRouter } from "next/navigation";
 import { ethers } from "ethers";
 import { useContracts } from "@/hooks/useContracts";
 import WalletConnectButton from "@/components/ui/WalletConnectButton";
-import TokenManagerAbi from "@/abi/TokenManager.json";
-import PolyPredictMarketAbi from "@/abi/PolyPredictMarket.json";
-import { CONTRACT_ADDRESSES } from "@/constants/contracts";
 
-// Market status enum
-const MarketStatus = {
-  0: "Active",
-  1: "Resolved",
-  2: "Cancelled"
-};
+const MARKET_STATUS = { 0: "Active", 1: "Resolved", 2: "Cancelled" };
+const MAX_PRICE = 1000000n; // 1,000,000 gwei
 
-/** Market detail page – fully ethers v6 / English UI */
+interface OrderInfo {
+  type: string;
+  isBuy: boolean;
+  price?: string;
+  amount: string;
+  txHash?: string;
+  error?: string;
+  estimatedProbability?: string;
+}
+
+interface DebugLog {
+  step: string;
+  data: any;
+  error?: string;
+  timestamp: string;
+}
+
 export default function MarketDetailPage() {
-  /* ------------- routing ------------- */
   const router = useRouter();
   const { id: rawId } = useParams<{ id: string }>();
   const marketId = Number(rawId);
-  const validMarket = Number.isFinite(marketId);
+  const validMarket = Number.isFinite(marketId) && marketId > 0;
 
-  /* ------------- wallet ------------- */
-  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
+  // Wallet state
   const [signer, setSigner] = useState<ethers.Signer | null>(null);
   const [address, setAddress] = useState<string | null>(null);
-
   const contracts = useContracts(signer);
 
-  /* ------------- state ------------- */
+  // Market and contract state
   const [marketInfo, setMarketInfo] = useState<any>(null);
   const [userBalance, setUserBalance] = useState<bigint>(0n);
-  const [tokenManager, setTokenManager] = useState<ethers.Contract | null>(null);
-  const [polyPredict, setPolyPredict] = useState<ethers.Contract | null>(null);
-  const [exchange, setExchange] = useState<ethers.Contract | null>(null);
+  const [bestPrices, setBestPrices] = useState({ bid: 0n, ask: MAX_PRICE });
+  const [userPosition, setUserPosition] = useState<number>(0);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshingBalance, setRefreshingBalance] = useState(false);
+  const [orderInfo, setOrderInfo] = useState<OrderInfo | null>(null);
 
-  // Best prices
-  const [bestBidPrice, setBestBidPrice] = useState<bigint>(0n);
-  const [bestAskPrice, setBestAskPrice] = useState<bigint>(BigInt('1000000'));
-  
-  // User position
-  const [userPosition, setUserPosition] = useState<{amount: string}|null>(null);
-  
-  // User orders
-  const [userOrders, setUserOrders] = useState<any[]>([]);
+  // Debug state
+  const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
 
   // Form state
   const [depositEth, setDepositEth] = useState("0.001");
-  const [price, setPrice] = useState("500000"); // gwei
+  const [price, setPrice] = useState("500000");
   const [amount, setAmount] = useState("1");
   const [isBuy, setIsBuy] = useState(true);
   const [orderType, setOrderType] = useState<"limit" | "market">("limit");
 
-  // UI state
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<"orders" | "position">("orders");
-
-  const log = (msg: unknown) => {
-    const t = typeof msg === "object" ? JSON.stringify(msg) : String(msg);
-    console.log(t);
-    setLogs((prev) => [...prev, t]);
-  };
-  
   const formatEth = (wei: bigint | string) => ethers.formatEther(wei);
   const formatGwei = (wei: bigint | string) => {
-    try {
-      return ethers.formatUnits(wei, 'gwei');
-    } catch {
-      return "0";
-    }
+    const weiValue = typeof wei === 'string' ? BigInt(wei) : wei;
+    return ethers.formatUnits(weiValue, 'gwei');
+  };
+  
+  const getProbability = (gweiPrice: string | bigint) => {
+    const priceValue = typeof gweiPrice === 'string' ? BigInt(gweiPrice) : gweiPrice;
+    // 计算概率为 (price / MAX_PRICE) * 100%
+    const probability = (Number(priceValue * 100n) / Number(MAX_PRICE));
+    const clampedProbability = Math.max(0, Math.min(100, probability));
+    return clampedProbability.toFixed(1);
   };
 
-  /* -------- helper: resolve contracts -------- */
-  const resolvePolyPredict = async () => {
-    if (polyPredict) return polyPredict;
-    if (contracts?.polyPredictMarket) {
-      setPolyPredict(contracts.polyPredictMarket);
-      return contracts.polyPredictMarket;
-    }
-    if (signer) {
-      const instance = new ethers.Contract(
-        CONTRACT_ADDRESSES.POLY_PREDICT_MARKET,
-        PolyPredictMarketAbi,
-        signer
-      );
-      setPolyPredict(instance);
-      return instance;
-    }
-    return null;
+  // Debug logging function
+  const addDebugLog = (step: string, data: any, error?: string) => {
+    const newLog: DebugLog = {
+      step,
+      data,
+      error,
+      timestamp: new Date().toLocaleTimeString()
+    };
+    setDebugLogs(prev => [...prev, newLog]);
   };
 
-  const resolveTokenManager = async (): Promise<ethers.Contract | null> => {
-    if (tokenManager) return tokenManager;
-    if (contracts?.tokenManager) {
-      setTokenManager(contracts.tokenManager);
-      return contracts.tokenManager;
-    }
-    if (signer) {
-      try {
-        const tm = new ethers.Contract(CONTRACT_ADDRESSES.TOKEN_MANAGER, TokenManagerAbi, signer);
-        await tm.callStatic.getAvailableBalance(address ?? ethers.ZeroAddress);
-        setTokenManager(tm);
-        return tm;
-      } catch {}
-    }
-    log("❌ TokenManager not resolved");
-    return null;
+  const getFullExchangeContract = async () => {
+    if (!contracts?.polyPredictMarket) return null;
+    
+    const exchangeAddress = await contracts.polyPredictMarket.getExchangeAddress();
+    return new ethers.Contract(
+      exchangeAddress,
+      [
+        "function getBestPrices(uint256) external view returns (uint256, uint256)",
+        "function getPosition(address, uint256) external view returns (int256)",
+        "function getUserOrders(address user) external view returns (uint256[] memory)",
+        "function getOrder(uint256 orderId) external view returns (uint256 id, uint256 marketId, bool isBuy, uint256 price, uint256 amount, uint256 filled, bool isActive, bool isResolved, uint256 timestamp, address trader)",
+        "event OrderPlaced(uint256 indexed orderId, address indexed trader, uint256 indexed marketId, bool isBuy, uint256 price, uint256 amount)",
+        "event TradeExecuted(uint256 indexed tradeId, uint256 buyOrderId, uint256 sellOrderId, uint256 price, uint256 amount, uint256 marketId)",
+        "event OrderFilled(uint256 indexed orderId, uint256 amount)"
+      ],
+      signer
+    );
   };
 
-  const resolveExchange = async (): Promise<ethers.Contract | null> => {
-    if (exchange) return exchange;
-    if (contracts?.exchange) {
-      setExchange(contracts.exchange);
-      return contracts.exchange;
-    }
-    if (polyPredict) {
-      try {
-        const exchangeAddress = await polyPredict.getExchangeAddress();
-        const instance = new ethers.Contract(
-          exchangeAddress,
-          [
-            "function getBestPrices(uint256 marketId) external view returns (uint256 bestBidPrice, uint256 bestAskPrice)",
-            "function getPosition(address trader, uint256 marketId) external view returns (int256 amount)",
-            "function getUserOrders(address user) external view returns (uint256[] memory)",
-            "function getOrder(uint256 orderId) external view returns (tuple(uint256 id, address trader, bool isBuy, uint256 price, uint256 amount, uint256 filled, uint256 timestamp, bool isActive, uint256 marketId, bool isResolved) memory)"
-          ],
-          signer
-        );
-        setExchange(instance);
-        return instance;
-      } catch (e) {
-        log(`Exchange resolve error: ${(e as Error).message}`);
-      }
-    }
-    return null;
+  const getExchangeContract = async () => {
+    if (!contracts?.polyPredictMarket) return null;
+    
+    const exchangeAddress = await contracts.polyPredictMarket.getExchangeAddress();
+    return new ethers.Contract(
+      exchangeAddress,
+      [
+        "function getBestPrices(uint256) external view returns (uint256, uint256)",
+        "function getPosition(address, uint256) external view returns (int256)"
+      ],
+      signer
+    );
   };
 
-  /* -------- balance -------- */
-  const refreshBalance = async () => {
-    if (!address) return;
-    const tm = await resolveTokenManager();
-    if (!tm) return;
-    try {
-      const bal: bigint = await tm.getAvailableBalance(address);
-      setUserBalance(bal);
-      log(`Balance updated: ${formatEth(bal)} ETH`);
-    } catch (e) {
-      log(`Balance fetch error: ${(e as Error).message}`);
-    }
-  };
-
-  /* -------- market info -------- */
-  const loadMarket = async () => {
+  /* --- Data Loading --- */
+  const loadMarketInfo = async () => {
     if (!contracts?.predictionMarket || !validMarket) return;
     try {
-      const info = await contracts.predictionMarket.getMarket(String(marketId));
+      const info = await contracts.predictionMarket.getMarket(marketId);
       setMarketInfo({
         question: info.question,
         outcomes: info.outcomes,
-        endTime: Number(info.endTime ?? 0n),
-        status: Number(info.status ?? 0n),
-        resolvedIdx: Number(info.resolvedOutcomeIndex ?? 0n),
-        creator: info.creator,
-        creationTime: Number(info.creationTime ?? 0n),
+        endTime: Number(info.endTime),
+        status: Number(info.status),
+        resolvedIdx: Number(info.resolvedOutcomeIndex),
+        creator: info.creator
       });
     } catch (e) {
-      log(`Market load failed: ${(e as Error).message}`);
+      console.error("Failed to load market info:", e);
+      setError("Market not found or loading failed");
     }
   };
 
-  /* -------- market prices -------- */
+  const loadUserBalance = async () => {
+    if (!address || !contracts?.tokenManager) return;
+    try {
+      const balance = await contracts.tokenManager.getAvailableBalance(address);
+      setUserBalance(balance);
+    } catch (e) {
+      console.error("Failed to load balance:", e);
+    }
+  };
+
+  const refreshBalance = async () => {
+    setRefreshingBalance(true);
+    try {
+      await loadUserBalance();
+    } catch (e) {
+      console.error("Failed to refresh balance:", e);
+      setError("Failed to refresh balance");
+    } finally {
+      setRefreshingBalance(false);
+    }
+  };
+
   const loadBestPrices = async () => {
     if (!validMarket) return;
-    const exch = await resolveExchange();
-    if (!exch) return;
+    const exchange = await getExchangeContract();
+    if (!exchange) return;
     
     try {
-      const [bid, ask] = await exch.getBestPrices(String(marketId));
-      setBestBidPrice(bid);
-      setBestAskPrice(ask);
-      log(`Best prices updated: Bid=${formatGwei(bid)} gwei, Ask=${formatGwei(ask)} gwei`);
+      const [bid, ask] = await exchange.getBestPrices(marketId);
+      setBestPrices({ bid, ask });
     } catch (e) {
-      log(`Price fetch error: ${(e as Error).message}`);
+      console.error("Failed to load best prices:", e);
     }
   };
 
-  /* -------- user position -------- */
   const loadUserPosition = async () => {
     if (!address || !validMarket) return;
-    const exch = await resolveExchange();
-    if (!exch) return;
+    const exchange = await getExchangeContract();
+    if (!exchange) return;
     
     try {
-      const position = await exch.getPosition(address, String(marketId));
-      setUserPosition({ amount: position.toString() });
-      log(`User position: ${position.toString()}`);
+      const position = await exchange.getPosition(address, marketId);
+      setUserPosition(Number(position));
     } catch (e) {
-      log(`Position fetch error: ${(e as Error).message}`);
+      console.error("Failed to load position:", e);
     }
   };
 
-  /* -------- user orders -------- */
-  const loadUserOrders = async () => {
-    if (!address) return;
-    const exch = await resolveExchange();
-    if (!exch) return;
-    
+  const refreshData = async () => {
+    await Promise.all([
+      loadMarketInfo(),
+      loadUserBalance(),
+      loadBestPrices(),
+      loadUserPosition()
+    ]);
+  };
+
+  /* --- Debug Functions --- */
+  const checkOrderAfterSubmission = async (txHash: string) => {
+    setShowDebug(true);
+    addDebugLog("Starting Post-Order Diagnostic", {
+      txHash,
+      timestamp: new Date().toISOString(),
+      address: address,
+      marketId: marketId
+    });
+
     try {
-      // Get order IDs
-      const orderIds = await exch.getUserOrders(address);
-      
-      // Get order details
-      const orders = [];
-      for (const id of orderIds) {
-        const order = await exch.getOrder(id);
+      // 等待交易回执
+      const receipt = await signer?.provider?.getTransactionReceipt(txHash);
+      addDebugLog("Transaction Receipt", {
+        status: receipt?.status,
+        blockNumber: receipt?.blockNumber,
+        gasUsed: receipt?.gasUsed?.toString(),
+        logs: receipt?.logs?.length
+      });
+
+      // 解析交易日志
+      if (receipt?.logs) {
+        const exchange = await getFullExchangeContract();
+        const abi = exchange?.interface;
         
-        // Only show orders for this market
-        if (Number(order.marketId) === marketId) {
-          orders.push({
-            id: Number(order.id),
-            isBuy: order.isBuy,
-            price: order.price,
-            amount: order.amount,
-            filled: order.filled,
-            isActive: order.isActive,
-            isResolved: order.isResolved,
-            timestamp: Number(order.timestamp)
-          });
-        }
+        addDebugLog("Raw Logs", {
+          count: receipt.logs.length,
+          logs: receipt.logs.map(log => ({
+            address: log.address,
+            topics: log.topics?.map(t => t.slice(0, 10)),
+            data: log.data?.slice(0, 20) + "..."
+          }))
+        });
+
+        // 尝试解析每个日志
+        let foundOrderId = null;
+        receipt.logs.forEach((log, index) => {
+          try {
+            if (abi) {
+              const parsed = abi.parseLog(log);
+              addDebugLog(`Parsed Log ${index}`, {
+                name: parsed?.name,
+                orderId: parsed?.args?.orderId?.toString(),
+                trader: parsed?.args?.trader,
+                marketId: parsed?.args?.marketId?.toString(),
+                isBuy: parsed?.args?.isBuy,
+                price: parsed?.args?.price?.toString(),
+                amount: parsed?.args?.amount?.toString()
+              });
+              
+              if (parsed?.name === "OrderPlaced") {
+                foundOrderId = parsed?.args?.orderId;
+              }
+            }
+          } catch (e) {
+            addDebugLog(`Log Parse Error ${index}`, {}, e.message);
+          }
+        });
       }
+
+      const exchange = await getFullExchangeContract();
+      if (!exchange) {
+        addDebugLog("Exchange Contract Error", {}, "Could not get exchange contract");
+        return;
+      }
+
+      // 使用多种方式查询 OrderPlaced 事件
       
-      setUserOrders(orders);
-      log(`Loaded ${orders.length} orders`);
+      // 方法1：正确的过滤器参数顺序
+      addDebugLog("Event Filter Details", {
+        orderIdIndex: 0,  // indexed parameter index
+        traderIndex: 1,   // indexed parameter index  
+        marketIdIndex: 2  // indexed parameter index
+      });
+
+      // 查询交易所在区块的事件
+      try {
+        const filterCorrect = exchange.filters.OrderPlaced(null, address, marketId);
+        const eventsInTxBlock = await exchange.queryFilter(filterCorrect, receipt?.blockNumber, receipt?.blockNumber);
+        
+        addDebugLog("Events in Transaction Block (Correct Filter)", {
+          blockNumber: receipt?.blockNumber,
+          eventCount: eventsInTxBlock.length,
+          events: eventsInTxBlock.map(e => ({
+            orderId: e.args?.orderId?.toString(),
+            trader: e.args?.trader,
+            marketId: e.args?.marketId?.toString(),
+            isBuy: e.args?.isBuy,
+            blockNumber: e.blockNumber,
+            transactionHash: e.transactionHash
+          }))
+        });
+      } catch (e) {
+        addDebugLog("Event Query Error (Tx Block)", {}, e.message);
+      }
+
+      // 方法2：查询更大范围的区块
+      try {
+        const filterBroader = exchange.filters.OrderPlaced(null, address, marketId);
+        const fromBlock = receipt?.blockNumber ? receipt.blockNumber - 10 : -1000;
+        const toBlock = receipt?.blockNumber ? receipt.blockNumber + 1 : "latest";
+        
+        const eventsInRange = await exchange.queryFilter(filterBroader, fromBlock, toBlock);
+        
+        addDebugLog("Events in Block Range", {
+          from: fromBlock,
+          to: toBlock,
+          eventCount: eventsInRange.length,
+          events: eventsInRange.slice(-3).map(e => ({
+            orderId: e.args?.orderId?.toString(),
+            trader: e.args?.trader,
+            marketId: e.args?.marketId?.toString(),
+            blockNumber: e.blockNumber,
+            transactionHash: e.transactionHash
+          }))
+        });
+      } catch (e) {
+        addDebugLog("Event Query Error (Block Range)", {}, e.message);
+      }
+
+      // 获取用户订单列表
+      try {
+        const userOrderIds = await exchange.getUserOrders(address);
+        addDebugLog("User Orders", {
+          orderCount: userOrderIds.length,
+          orderIds: userOrderIds.map(id => id.toString()),
+          latestOrders: userOrderIds.slice(-3).map(id => id.toString())
+        });
+
+        // 获取最新几个订单的详细信息
+        const recentOrders = [];
+        for (let i = Math.max(0, userOrderIds.length - 3); i < userOrderIds.length; i++) {
+          try {
+            const orderId = userOrderIds[i];
+            const order = await exchange.getOrder(orderId);
+            recentOrders.push({
+              id: order.id.toString(),
+              marketId: order.marketId.toString(),
+              trader: order.trader,
+              isBuy: order.isBuy,
+              price: order.price.toString(),
+              amount: order.amount.toString(),
+              filled: order.filled.toString(),
+              isActive: order.isActive,
+              isResolved: order.isResolved,
+              timestamp: order.timestamp.toString(),
+              // 验证是否是我们的交易
+              isFromThisTx: order.timestamp.toString() === Math.floor(Date.now() / 1000).toString()
+            });
+          } catch (e) {
+            addDebugLog(`Order ${userOrderIds[i]} Error`, {}, e.message);
+          }
+        }
+
+        addDebugLog("Recent Orders Details", {
+          orders: recentOrders,
+          count: recentOrders.length
+        });
+      } catch (e) {
+        addDebugLog("User Orders Error", {}, e.message);
+      }
+
+      // 检查最佳价格
+      try {
+        const [bid, ask] = await exchange.getBestPrices(marketId);
+        addDebugLog("Best Prices After Order", {
+          bid: bid.toString(),
+          ask: ask.toString(),
+          bidGwei: formatGwei(bid),
+          askGwei: formatGwei(ask)
+        });
+      } catch (e) {
+        addDebugLog("Best Prices Error", {}, e.message);
+      }
+
+      // 检查用户位置
+      try {
+        const position = await exchange.getPosition(address, marketId);
+        addDebugLog("User Position After Order", {
+          position: position.toString(),
+          marketId: marketId
+        });
+      } catch (e) {
+        addDebugLog("Position Query Error", {}, e.message);
+      }
+
     } catch (e) {
-      log(`Orders fetch error: ${(e as Error).message}`);
+      addDebugLog("Diagnostic Error", {}, e.message);
     }
   };
 
-  /* -------- unified tx wrapper -------- */
-  const withTx = async (label: string, fn: () => Promise<ethers.TransactionResponse>) => {
+  /* --- Transaction Handler --- */
+  const handleTx = async (label: string, fn: () => Promise<ethers.TransactionResponse>) => {
     setLoading(true);
     setError(null);
+    setOrderInfo(null);
+    
     try {
-      const tx = await fn();                // broadcast
-      log(`${label} tx: ${tx.hash}`);
-      const rc = await tx.wait();           // confirm
-      if (rc.status !== 1n) throw new Error("Transaction reverted");
+      const tx = await fn();
       
-      // Refresh data
-      await refreshBalance();
-      await loadBestPrices();
-      await loadUserPosition();
-      await loadUserOrders();
+      // Show transaction hash immediately
+      setOrderInfo(prevInfo => ({
+        ...prevInfo!,
+        txHash: tx.hash
+      }));
       
+      await tx.wait();
+      
+      // Run post-order diagnostic if this was an order transaction
+      if (label === "Order") {
+        await checkOrderAfterSubmission(tx.hash);
+      }
+      
+      await refreshData();
     } catch (e: any) {
-      const msg = e.shortMessage ?? e.message;
-      setError(msg);
-      log(`${label} failed: ${msg}`);
+      setError(e.shortMessage ?? e.message);
+      setOrderInfo(prevInfo => prevInfo ? {
+        ...prevInfo,
+        error: e.shortMessage ?? e.message
+      } : null);
     } finally {
       setLoading(false);
     }
   };
 
-  /* -------- actions -------- */
-  const deposit = () =>
-    withTx("Deposit", async () => {
-      const contract = await resolvePolyPredict();
-      if (!contract) throw new Error("PolyPredict contract missing");
-      const value = ethers.parseEther(depositEth);
-      // static call – pre‑flight check
-      await contract.callStatic.deposit({ value });
-      return contract.deposit({ value });
-    });
+  /* --- Actions --- */
+  const deposit = () => handleTx("Deposit", async () => {
+    if (!contracts?.tokenManager) throw new Error("TokenManager not available");
+    return contracts.tokenManager.deposit({ value: ethers.parseEther(depositEth) });
+  });
 
-  const placeOrder = () =>
-    withTx("Order", async () => {
-      const contract = await resolvePolyPredict();
-      if (!contract) throw new Error("PolyPredict contract missing");
-      if (!validMarket) throw new Error("Invalid market");
+  const placeOrder = () => {
+    const priceBigInt = BigInt(price);
+    const amountBigInt = BigInt(amount);
+    
+    // Create order info for display
+    const orderInfoObj: OrderInfo = {
+      type: orderType,
+      isBuy: isBuy,
+      amount: amount,
+      estimatedProbability: orderType === "limit" ? getProbability(price) : undefined
+    };
+    
+    if (orderType === "limit") {
+      orderInfoObj.price = price;
+    }
+    
+    setOrderInfo(orderInfoObj);
+    
+    handleTx("Order", async () => {
+      if (!contracts?.tokenManager || !validMarket) throw new Error("Invalid contract or market");
       
       if (orderType === "limit") {
-        return contract.placeOrder(String(marketId), isBuy, price, amount);
+        return contracts.tokenManager.placeOrderWithFunds(marketId, isBuy, priceBigInt, amountBigInt);
       } else {
-        return contract.placeMarketOrder(String(marketId), isBuy, amount);
+        return contracts.tokenManager.placeMarketOrderWithFunds(marketId, isBuy, amountBigInt);
       }
     });
+  };
 
-  const cancelOrder = (orderId: number) =>
-    withTx("Cancel", async () => {
-      const contract = await resolvePolyPredict();
-      if (!contract) throw new Error("PolyPredict contract missing");
-      return contract.cancelOrder(String(orderId));
-    });
+  const claimProfit = () => handleTx("Claim", async () => {
+    if (!contracts?.tokenManager) throw new Error("TokenManager not available");
+    return contracts.tokenManager.claimProfit(marketId);
+  });
 
-  const claimProfit = () =>
-    withTx("Claim", async () => {
-      const contract = await resolvePolyPredict();
-      if (!contract) throw new Error("PolyPredict contract missing");
-      return contract.claimProfit(String(marketId));
-    });
-
-  /* -------- effects -------- */
+  /* --- Effects --- */
   useEffect(() => {
     if (signer && address) {
-      loadMarket();
-      refreshBalance();
-      
-      // Resolve contracts and load data
-      (async () => {
-        await resolvePolyPredict();
-        await resolveExchange();
-        await loadBestPrices();
-        await loadUserPosition();
-        await loadUserOrders();
-      })();
-      
-      // Set polling for price updates
-      const priceInterval = setInterval(loadBestPrices, 30000); // Every 30 seconds
-      
-      return () => {
-        clearInterval(priceInterval);
-      };
+      refreshData();
+      const interval = setInterval(loadBestPrices, 30000);
+      return () => clearInterval(interval);
     }
   }, [signer, address]);
 
-  /* -------- wallet callback -------- */
   const onConnect = (prov: ethers.BrowserProvider, sgnr: ethers.Signer, addr: string) => {
-    setProvider(prov);
     setSigner(sgnr);
     setAddress(addr);
   };
 
-  /* -------- probability helpers -------- */
-  const getProbability = (gweiPrice: string | bigint) => {
-    try {
-      const price = BigInt(gweiPrice);
-      const maxPrice = BigInt(1000000);
-      return (Number(price) / Number(maxPrice) * 100).toFixed(1);
-    } catch {
-      return "0.0";
-    }
-  };
-
-  /* -------- render -------- */
-  if (!validMarket) return <div className="p-6">Invalid market ID.</div>;
+  /* --- Render --- */
+  if (!validMarket) return <div className="p-6 text-red-600">Invalid market ID.</div>;
 
   return (
     <div className="p-6 space-y-8 max-w-4xl mx-auto">
-      {/* top bar */}
+      {/* Wallet & Navigation */}
       <div className="flex justify-between">
         <button onClick={() => router.back()} className="text-sm text-blue-500">← Back</button>
         <WalletConnectButton onConnect={onConnect} />
       </div>
 
-      {/* market card */}
-      {marketInfo ? (
-        <div className="border rounded p-4 space-y-2">
-          <h2 className="text-xl font-bold">{marketInfo.question}</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p><span className="font-semibold">Outcomes:</span> {marketInfo.outcomes.join(' / ')}</p>
-              <p><span className="font-semibold">Created:</span> {new Date(marketInfo.creationTime * 1000).toLocaleString()}</p>
-              <p><span className="font-semibold">Ends:</span> {new Date(marketInfo.endTime * 1000).toLocaleString()}</p>
+      {/* Market Card */}
+      <div className="border rounded p-4 space-y-2">
+        {marketInfo ? (
+          <>
+            <h2 className="text-xl font-bold">{marketInfo.question}</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p><span className="font-semibold">Outcomes:</span> {marketInfo.outcomes.join(' / ')}</p>
+                <p><span className="font-semibold">Ends:</span> {new Date(marketInfo.endTime * 1000).toLocaleString()}</p>
+              </div>
+              <div>
+                <p><span className="font-semibold">Status:</span> {MARKET_STATUS[marketInfo.status]}</p>
+                {marketInfo.status === 1 && (
+                  <p><span className="font-semibold">Resolved:</span> {marketInfo.outcomes[marketInfo.resolvedIdx]}</p>
+                )}
+              </div>
             </div>
-            <div>
-              <p><span className="font-semibold">Status:</span> {MarketStatus[marketInfo.status]}</p>
-              {marketInfo.status === 1 && (
-                <p><span className="font-semibold">Resolved Outcome:</span> {marketInfo.outcomes[marketInfo.resolvedIdx]}</p>
-              )}
-              <p><span className="font-semibold">Creator:</span> {marketInfo.creator?.slice(0, 6)}...{marketInfo.creator?.slice(-4)}</p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <p>Loading market...</p>
-      )}
+          </>
+        ) : (
+          <p>Loading market...</p>
+        )}
+      </div>
 
-      {/* market prices */}
+      {/* Market Prices */}
       <div className="border rounded p-4">
         <h3 className="font-semibold mb-2">Market Prices</h3>
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-green-50 p-3 rounded">
-            <p className="text-xs text-gray-600">Best Bid (Buy Price)</p>
-            <p className="text-lg font-semibold text-green-700">{formatGwei(bestBidPrice)} gwei</p>
-            <p className="text-xs text-gray-600">Implied Probability: {getProbability(bestBidPrice)}%</p>
+            <p className="text-xs text-gray-600">Best Bid</p>
+            <p className="text-lg font-semibold text-green-700">{formatGwei(bestPrices.bid)} gwei</p>
+            <p className="text-xs text-gray-600">
+              {bestPrices.bid > 0n ? `Probability: ${getProbability(bestPrices.bid)}%` : 'No bids'}
+            </p>
           </div>
           <div className="bg-red-50 p-3 rounded">
-            <p className="text-xs text-gray-600">Best Ask (Sell Price)</p>
-            <p className="text-lg font-semibold text-red-700">{formatGwei(bestAskPrice)} gwei</p>
-            <p className="text-xs text-gray-600">Implied Probability: {getProbability(bestAskPrice)}%</p>
+            <p className="text-xs text-gray-600">Best Ask</p>
+            <p className="text-lg font-semibold text-red-700">{formatGwei(bestPrices.ask)} gwei</p>
+            <p className="text-xs text-gray-600">
+              {bestPrices.ask < MAX_PRICE ? `Probability: ${getProbability(bestPrices.ask)}%` : 'No asks'}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* User balances and position */}
+      {/* Balance & Position */}
       <div className="border rounded p-4 grid grid-cols-2 gap-4">
         <div>
-          <h3 className="font-semibold mb-2">Balance</h3>
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="font-semibold">Balance</h3>
+            <button
+              onClick={refreshBalance}
+              disabled={refreshingBalance}
+              className={`px-3 py-1 text-sm rounded ${
+                refreshingBalance 
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                  : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+              }`}
+            >
+              {refreshingBalance ? '🔄' : '⟳ Refresh'}
+            </button>
+          </div>
           <p className="text-lg font-semibold">{formatEth(userBalance)} ETH</p>
         </div>
         <div>
-          <h3 className="font-semibold mb-2">Current Position</h3>
-          {userPosition ? (
-            <p className={`text-lg font-semibold ${Number(userPosition.amount) > 0 ? 'text-green-600' : Number(userPosition.amount) < 0 ? 'text-red-600' : ''}`}>
-              {userPosition.amount} {Number(userPosition.amount) > 0 ? '(Long)' : Number(userPosition.amount) < 0 ? '(Short)' : '(No Position)'}
-            </p>
-          ) : (
-            <p>Loading...</p>
-          )}
+          <h3 className="font-semibold mb-2">Position</h3>
+          <p className={`text-lg font-semibold ${userPosition > 0 ? 'text-green-600' : userPosition < 0 ? 'text-red-600' : ''}`}>
+            {userPosition || '0'} {userPosition > 0 ? '(Long)' : userPosition < 0 ? '(Short)' : ''}
+          </p>
         </div>
       </div>
 
-      {/* deposit */}
+      {/* Deposit */}
       <div className="border rounded p-4 space-y-2">
         <h3 className="font-semibold">Deposit ETH</h3>
         <div className="flex space-x-2">
           <input
             type="number"
-            min="0.0001"
-            step="0.001"
             value={depositEth}
             onChange={(e) => setDepositEth(e.target.value)}
             className="border p-2 rounded flex-grow"
           />
-          <button
-            onClick={deposit}
-            disabled={loading || Number(depositEth) <= 0}
-            className="p-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 w-32"
-          >
+          <button onClick={deposit} disabled={loading} className="p-2 bg-blue-600 text-white rounded">
             {loading ? 'Processing...' : 'Deposit'}
           </button>
         </div>
       </div>
 
-      {/* order form */}
+      {/* Order Form */}
       <div className="border rounded p-4 space-y-4">
-        <h3 className="font-semibold">Place an Order</h3>
+        <h3 className="font-semibold">Place Order</h3>
         
-        {/* Order type */}
-        <div className="flex space-x-4">
-          <label className="flex items-center">
-            <input 
-              type="radio" 
-              checked={orderType === "limit"} 
-              onChange={() => setOrderType("limit")} 
-            />
-            <span className="ml-1">Limit Order</span>
-          </label>
-          <label className="flex items-center">
-            <input 
-              type="radio" 
-              checked={orderType === "market"} 
-              onChange={() => setOrderType("market")} 
-            />
-            <span className="ml-1">Market Order</span>
-          </label>
+        <div className="flex gap-4">
+          {["limit", "market"].map(type => (
+            <label key={type} className="flex items-center">
+              <input type="radio" checked={orderType === type} onChange={() => setOrderType(type as any)} />
+              <span className="ml-1 capitalize">{type} Order</span>
+            </label>
+          ))}
         </div>
         
-        {/* Buy/Sell */}
-        <div className="flex space-x-4">
-          <label className="flex items-center">
-            <input type="radio" checked={isBuy} onChange={() => setIsBuy(true)} />
-            <span className="ml-1">Buy (Long)</span>
-          </label>
-          <label className="flex items-center">
-            <input type="radio" checked={!isBuy} onChange={() => setIsBuy(false)} />
-            <span className="ml-1">Sell (Short)</span>
-          </label>
+        <div className="flex gap-4">
+          {[{ value: true, label: "Buy (Long)" }, { value: false, label: "Sell (Short)" }].map(({ value, label }) => (
+            <label key={String(value)} className="flex items-center">
+              <input type="radio" checked={isBuy === value} onChange={() => setIsBuy(value)} />
+              <span className="ml-1">{label}</span>
+            </label>
+          ))}
         </div>
         
-        {/* Price - only for limit orders */}
         {orderType === "limit" && (
-          <div className="space-y-1">
+          <div>
             <label className="text-sm text-gray-600">Price (gwei)</label>
             <input
-              placeholder="Price (gwei)"
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               className="border p-2 rounded w-full"
             />
-            <div className="text-xs text-gray-500">Implied Probability: {getProbability(price)}%</div>
-            
-            <div className="flex space-x-2 mt-2">
-              <button 
-                onClick={() => setPrice(formatGwei(bestBidPrice))} 
-                className="text-xs bg-gray-100 px-2 py-1 rounded"
-              >
-                Use Best Bid
-              </button>
-              <button 
-                onClick={() => setPrice(formatGwei(bestAskPrice))} 
-                className="text-xs bg-gray-100 px-2 py-1 rounded"
-              >
-                Use Best Ask
-              </button>
-            </div>
+            <div className="text-xs text-gray-500 mt-1">Probability: {getProbability(price)}%</div>
           </div>
         )}
         
-        {/* Amount */}
-        <div className="space-y-1">
+        <div>
           <label className="text-sm text-gray-600">Amount</label>
           <input
-            placeholder="Amount"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             className="border p-2 rounded w-full"
           />
         </div>
         
-        {/* Submit button */}
         <button
           onClick={placeOrder}
           disabled={loading}
-          className={`p-2 text-white rounded hover:bg-opacity-90 disabled:bg-gray-400 w-full ${isBuy ? 'bg-green-600' : 'bg-red-600'}`}
+          className={`p-2 text-white rounded w-full ${isBuy ? 'bg-green-600' : 'bg-red-600'}`}
         >
-          {loading ? 'Processing...' : `${isBuy ? 'Buy' : 'Sell'} ${orderType === "market" ? '(Market)' : ''}`}
+          {loading ? 'Processing...' : `${isBuy ? 'Buy' : 'Sell'}`}
         </button>
       </div>
 
-      {/* Tabs for orders and positions */}
-      <div className="border rounded">
-        <div className="flex border-b">
-          <button 
-            className={`py-2 px-4 ${activeTab === "orders" ? 'bg-gray-100 font-semibold' : ''}`}
-            onClick={() => setActiveTab("orders")}
-          >
-            My Orders
-          </button>
-          <button 
-            className={`py-2 px-4 ${activeTab === "position" ? 'bg-gray-100 font-semibold' : ''}`}
-            onClick={() => setActiveTab("position")}
-          >
-            Position Management
-          </button>
+      {/* Order Info */}
+      {orderInfo && (
+        <div className={`border rounded p-4 ${orderInfo.error ? 'bg-red-50' : 'bg-blue-50'}`}>
+          <h3 className="font-semibold mb-2">Order Information</h3>
+          <div className="space-y-1">
+            <p><span className="font-semibold">Type:</span> {orderInfo.type} order</p>
+            <p><span className="font-semibold">Side:</span> {orderInfo.isBuy ? 'Buy (Long)' : 'Sell (Short)'}</p>
+            {orderInfo.price && (
+              <p><span className="font-semibold">Price:</span> {formatGwei(orderInfo.price)} gwei</p>
+            )}
+            <p><span className="font-semibold">Amount:</span> {orderInfo.amount}</p>
+            {orderInfo.estimatedProbability && (
+              <p><span className="font-semibold">Estimated Probability:</span> {orderInfo.estimatedProbability}%</p>
+            )}
+            {orderInfo.txHash && (
+              <p><span className="font-semibold">Transaction Hash:</span> {orderInfo.txHash.slice(0, 10)}...{orderInfo.txHash.slice(-8)}</p>
+            )}
+            {orderInfo.error && (
+              <p><span className="font-semibold">Error:</span> {orderInfo.error}</p>
+            )}
+          </div>
         </div>
-        
-        <div className="p-4">
-          {activeTab === "orders" ? (
-            <div>
-              <h3 className="font-semibold mb-2">My Orders</h3>
-              {userOrders.length > 0 ? (
-                <div className="space-y-2">
-                  {userOrders.map(order => (
-                    <div key={order.id} className="border p-2 rounded flex justify-between items-center">
-                      <div>
-                        <span className={`font-semibold ${order.isBuy ? 'text-green-600' : 'text-red-600'}`}>
-                          {order.isBuy ? 'Buy' : 'Sell'}
-                        </span>
-                        <span className="mx-1">@</span>
-                        <span>{formatGwei(order.price)} gwei</span>
-                        <div className="text-sm text-gray-600">
-                          Amount: {order.amount.toString()} | Filled: {order.filled.toString()}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {new Date(order.timestamp * 1000).toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="flex flex-col space-y-1">
-                        <span className={`text-xs px-2 py-1 rounded ${
-                          order.isResolved ? 'bg-purple-100 text-purple-800' :
-                          order.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100'
-                        }`}>
-                          {order.isResolved ? 'Settled' : order.isActive ? 'Active' : 'Completed'}
-                        </span>
-                        {order.isActive && (
-                          <button
-                            onClick={() => cancelOrder(order.id)}
-                            className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-gray-500">No orders found</p>
-              )}
-            </div>
-          ) : (
-            <div>
-              <h3 className="font-semibold mb-2">Claim Profit</h3>
-              <p className="mb-4">If the market has been resolved and you have winning positions, you can claim your profit.</p>
-              <button
-                onClick={claimProfit}
-                disabled={loading || marketInfo?.status !== 1}
-                className="p-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400 w-full"
-              >
-                {loading ? 'Processing...' : 'Claim Profit'}
-              </button>
-              {marketInfo?.status !== 1 && (
-                <p className="text-sm text-gray-500 mt-2">* Market is not resolved yet, cannot claim profit</p>
-              )}
-            </div>
-          )}
+      )}
+
+      {/* Debug Logs */}
+      {showDebug && (
+        <div className="border rounded p-4 bg-gray-50 max-h-96 overflow-y-auto">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="font-semibold">Debug Logs:</h3>
+            <button 
+              onClick={() => setShowDebug(false)}
+              className="px-3 py-1 text-sm bg-gray-600 text-white rounded"
+            >
+              Hide Logs
+            </button>
+          </div>
+          <pre className="whitespace-pre-wrap text-xs">
+            {debugLogs.map((log, index) => (
+              <div key={index} className={`mb-2 ${log.error ? 'text-red-600' : 'text-gray-800'}`}>
+                <strong>[{log.timestamp}] {log.step}:</strong>
+                {'\n'}
+                {JSON.stringify(log.data, null, 2)}
+                {log.error && '\nERROR: ' + log.error}
+                {'\n'}
+                {'='.repeat(50)}
+              </div>
+            ))}
+          </pre>
         </div>
+      )}
+
+      {/* Claim Profit */}
+      <div className="border rounded p-4">
+        <h3 className="font-semibold mb-2">Claim Profit</h3>
+        <button
+          onClick={claimProfit}
+          disabled={loading || marketInfo?.status !== 1}
+          className="p-2 bg-purple-600 text-white rounded w-full"
+        >
+          {loading ? 'Processing...' : 'Claim Profit'}
+        </button>
       </div>
 
-      {/* error */}
+      {/* Error */}
       {error && <div className="text-red-600 p-3 bg-red-50 rounded">Error: {error}</div>}
-
-      {/* logs */}
-      <div className="border rounded p-4 bg-gray-50">
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="font-semibold">Activity Log</h3>
-          <button 
-            onClick={() => setLogs([])}
-            className="text-xs text-gray-500 hover:text-gray-800"
-          >
-            Clear
-          </button>
-        </div>
-        <div className="text-xs font-mono max-h-64 overflow-y-auto">
-          {logs.length > 0 ? (
-            logs.map((l, i) => <div key={i} className="py-1 border-b border-gray-100">{l}</div>)
-          ) : (
-            <div className="text-gray-500">No logs</div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

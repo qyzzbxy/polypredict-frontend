@@ -1,480 +1,233 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
-import { useState, useEffect } from "react";
 import WalletConnectButton from "@/components/ui/WalletConnectButton";
+import Link from "next/link";
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESSES } from "@/constants/contracts";
-import PolyPredictMarketAbi from "@/abi/PolyPredictMarket.json";
-import TokenManagerAbi from "@/abi/TokenManager.json";
+import { useState } from "react";
 
 export default function HomePage() {
-  // -----------------------------
-  // React state hooks
-  // -----------------------------
   const [address, setAddress] = useState<string | null>(null);
-  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
-  const [signer, setSigner] = useState<ethers.Signer | null>(null);
-  const [contractAddresses, setContractAddresses] = useState({
-    polyPredictMarket: CONTRACT_ADDRESSES.POLY_PREDICT_MARKET ?? "未设置",
-    tokenManager: CONTRACT_ADDRESSES.TOKEN_MANAGER ?? "未设置",
-    predictionMarket: "未获取",
-    exchange: "未获取",
-  });
-  const [logOutput, setLogOutput] = useState<string[]>([]);
-  const [depositAmount, setDepositAmount] = useState("0.001");
-  const [isLoading, setIsLoading] = useState(false);
-  const [polyContract, setPolyContract] = useState<ethers.Contract | null>(null);
-  const [tokenContract, setTokenContract] = useState<ethers.Contract | null>(null);
 
-  // -----------------------------
-  // Helper utilities
-  // -----------------------------
-  const addLog = (message: unknown) => {
-    // bigints cannot be stringified directly – convert to string first
-    const safeMsg =
-      typeof message === "bigint"
-        ? message.toString()
-        : typeof message === "object"
-        ? JSON.stringify(message, (_k, v) => (typeof v === "bigint" ? v.toString() : v))
-        : (message as string);
-    console.log(safeMsg);
-    setLogOutput((prev) => [...prev, safeMsg]);
-  };
-
-  const clearLog = () => setLogOutput([]);
-
-  // -----------------------------
-  // Wallet connection callback
-  // -----------------------------
   const handleWalletConnect = (
     prov: ethers.BrowserProvider,
     sgnr: ethers.Signer,
     addr: string,
   ) => {
-    console.log("Wallet connected:", addr);
-    setProvider(prov);
-    setSigner(sgnr);
     setAddress(addr);
   };
 
-  // -----------------------------
-  // Initialise contract instances when signer is ready
-  // -----------------------------
-  useEffect(() => {
-    if (!signer) return;
-
-    try {
-      const poly = new ethers.Contract(
-        CONTRACT_ADDRESSES.POLY_PREDICT_MARKET,
-        PolyPredictMarketAbi,
-        signer,
-      );
-      const token = new ethers.Contract(
-        CONTRACT_ADDRESSES.TOKEN_MANAGER,
-        TokenManagerAbi,
-        signer,
-      );
-      setPolyContract(poly);
-      setTokenContract(token);
-      addLog("合约实例已初始化");
-    } catch (err) {
-      addLog(`初始化合约失败: ${(err as Error).message}`);
-    }
-  }, [signer]);
-
-  // =====================================================================
-  // Test helpers — converted to ethers v6 (BigInt + utils.* removed)
-  // =====================================================================
-
-  /**
-   * TEST 1 — fetch contract addresses held by coordinator contract
-   */
-  const fetchContractAddresses = async () => {
-    clearLog();
-    setIsLoading(true);
-    addLog("===== 测试1: 获取并验证合约地址 =====");
-
-    if (!signer) {
-      addLog("需要先连接钱包");
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      const poly = new ethers.Contract(
-        CONTRACT_ADDRESSES.POLY_PREDICT_MARKET,
-        PolyPredictMarketAbi,
-        signer,
-      );
-      addLog(`使用常量中的PolyPredictMarket地址: ${CONTRACT_ADDRESSES.POLY_PREDICT_MARKET}`);
-
-      // TokenManager 地址验证
-      const tokenManagerAddress: string = await poly.getTokenManagerAddress();
-      addLog(`从合约获取的TokenManager地址: ${tokenManagerAddress}`);
-      setContractAddresses((prev) => ({ ...prev, tokenManager: tokenManagerAddress }));
-      if (
-        CONTRACT_ADDRESSES.TOKEN_MANAGER.toLowerCase() !== tokenManagerAddress.toLowerCase()
-      ) {
-        addLog(
-          `⚠️ 常量中的TOKEN_MANAGER地址 (${CONTRACT_ADDRESSES.TOKEN_MANAGER}) 与合约返回的不一致!`,
-        );
-      } else {
-        addLog("✅ TOKEN_MANAGER地址验证通过");
-      }
-
-      // PredictionMarket
-      const predictionMarketAddress: string = await poly.getMarketAddress();
-      addLog(`从合约获取的PredictionMarket地址: ${predictionMarketAddress}`);
-      setContractAddresses((prev) => ({ ...prev, predictionMarket: predictionMarketAddress }));
-
-      // Exchange
-      const exchangeAddress: string = await poly.getExchangeAddress();
-      addLog(`从合约获取的Exchange地址: ${exchangeAddress}`);
-      setContractAddresses((prev) => ({ ...prev, exchange: exchangeAddress }));
-
-      // 余额
-      if (address && tokenManagerAddress) {
-        try {
-          const token = new ethers.Contract(tokenManagerAddress, TokenManagerAbi, signer);
-          const balance: bigint = await token.getAvailableBalance(address);
-          addLog(`通过getAvailableBalance获取的余额: ${balance.toString()}`);
-          const directBalance: bigint = await token.balances(address);
-          addLog(`通过直接访问balances映射获取的余额: ${directBalance.toString()}`);
-        } catch (error) {
-          addLog(`查询余额失败: ${(error as Error).message}`);
-        }
-      }
-    } catch (err) {
-      addLog(`获取合约地址失败: ${(err as Error).message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  /**
-   * TEST 2 — analyse ABI methods
-   */
-  const analyzeContractMethods = async () => {
-    clearLog();
-    setIsLoading(true);
-    addLog("===== 测试2: 分析合约方法 =====");
-
-    try {
-      const poly = new ethers.Contract(
-        CONTRACT_ADDRESSES.POLY_PREDICT_MARKET,
-        PolyPredictMarketAbi,
-        signer,
-      );
-      const token = new ethers.Contract(CONTRACT_ADDRESSES.TOKEN_MANAGER, TokenManagerAbi, signer);
-
-      // PolyPredictMarket methods
-      addLog("检查PolyPredictMarket合约:");
-      const polyFns = poly.interface.fragments.filter((f: any) => f.type === "function").map((f: any) => f.name).sort();
-      addLog(`发现 ${polyFns.length} 个方法`);
-      polyFns.forEach((fn) => addLog(`- ${fn}`));
-      addLog(polyFns.includes("deposit") ? "✅ deposit方法存在" : "⚠️ 缺少deposit方法");
-
-      // TokenManager methods
-      addLog("\n检查TokenManager合约:");
-      const tokenFns = token.interface.fragments.filter((f: any) => f.type === "function").map((f: any) => f.name).sort();
-      addLog(`发现 ${tokenFns.length} 个方法`);
-      tokenFns.forEach((fn) => addLog(`- ${fn}`));
-      addLog(tokenFns.includes("deposit") ? "✅ deposit方法存在" : "⚠️ 缺少deposit方法");
-    } catch (err) {
-      addLog(`分析合约方法失败: ${(err as Error).message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  /**
-   * TEST 3 — direct deposit to TokenManager
-   */
-  const testDirectDeposit = async () => {
-    clearLog();
-    setIsLoading(true);
-    addLog("===== 测试3: 直接通过TokenManager存款 =====");
-
-    if (!address) {
-      addLog("⚠️ 请先连接钱包");
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      const token = new ethers.Contract(CONTRACT_ADDRESSES.TOKEN_MANAGER, TokenManagerAbi, signer);
-      addLog(`使用TokenManager地址: ${CONTRACT_ADDRESSES.TOKEN_MANAGER}`);
-
-      let initialBalance: bigint = 0n;
-      try {
-        initialBalance = await token.balances(address);
-        addLog(`初始余额: ${initialBalance.toString()} wei`);
-        addLog(`格式化: ${ethers.formatEther(initialBalance)} ETH`);
-      } catch (e) {
-        addLog(`查询初始余额失败: ${(e as Error).message}`);
-      }
-
-      const value = ethers.parseEther(depositAmount);
-      addLog(`准备存入: ${depositAmount} ETH (${value.toString()} wei)`);
-
-      const tx = await token.deposit({ value });
-      addLog(`交易已提交，哈希: ${tx.hash}`);
-      const receipt = await tx.wait();
-      addLog(`交易状态: ${receipt.status === 1n ? "成功" : "失败"}`);
-
-      await new Promise((res) => setTimeout(res, 8000));
-      const newBalance: bigint = await token.balances(address);
-      addLog(`更新后余额: ${newBalance.toString()} wei`);
-      addLog(`格式化: ${ethers.formatEther(newBalance)} ETH`);
-
-      const diff = newBalance - initialBalance;
-      addLog(`余额变化: ${diff.toString()} wei (${ethers.formatEther(diff)} ETH)`);
-      addLog(diff === 0n ? "⚠️ 余额没有变化，存款可能失败!" : "✅ 余额已更新，存款成功!");
-    } catch (err) {
-      addLog(`直接通过TokenManager存款失败: ${(err as Error).message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  /**
-   * TEST 4 — deposit via PolyPredictMarket
-   */
-  const testPolyDeposit = async () => {
-    clearLog();
-    setIsLoading(true);
-    addLog("===== 测试4: 通过PolyPredictMarket存款 =====");
-
-    if (!address) {
-      addLog("⚠️ 请先连接钱包");
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      const poly = new ethers.Contract(
-        CONTRACT_ADDRESSES.POLY_PREDICT_MARKET,
-        PolyPredictMarketAbi,
-        signer,
-      );
-      const token = new ethers.Contract(CONTRACT_ADDRESSES.TOKEN_MANAGER, TokenManagerAbi, signer);
-
-      let initialBalance: bigint = 0n;
-      try {
-        initialBalance = await token.balances(address);
-        addLog(`初始余额: ${ethers.formatEther(initialBalance)} ETH`);
-      } catch (e) {
-        addLog(`查询初始余额失败: ${(e as Error).message}`);
-      }
-
-      const value = ethers.parseEther(depositAmount);
-      addLog(`准备通过PolyPredictMarket存入: ${depositAmount} ETH (${value.toString()} wei)`);
-      const tx = await poly.deposit({ value });
-      addLog(`交易已提交，哈希: ${tx.hash}`);
-      const receipt = await tx.wait();
-      addLog(`交易状态: ${receipt.status === 1n ? "成功" : "失败"}`);
-
-      await new Promise((res) => setTimeout(res, 10000));
-      const newBalance: bigint = await token.balances(address);
-      const diff = newBalance - initialBalance;
-      addLog(`更新后余额: ${ethers.formatEther(newBalance)} ETH`);
-      addLog(`余额变化: ${ethers.formatEther(diff)} ETH`);
-      addLog(diff === 0n ? "⚠️ 余额没有变化，存款可能失败!" : "✅ 存款成功!");
-    } catch (err) {
-      addLog(`通过PolyPredictMarket存款失败: ${(err as Error).message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  /**
-   * TEST 5 — cross‑contract diagnosis (kept简化，仍使用 bigint)
-   */
-  const diagnoseContractIssues = async () => {
-    clearLog();
-    setIsLoading(true);
-    addLog("===== 测试5: 诊断合约交叉调用问题 =====");
-
-    if (!address) {
-      addLog("⚠️ 请先连接钱包");
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      const poly = new ethers.Contract(
-        CONTRACT_ADDRESSES.POLY_PREDICT_MARKET,
-        PolyPredictMarketAbi,
-        signer,
-      );
-      const token = new ethers.Contract(CONTRACT_ADDRESSES.TOKEN_MANAGER, TokenManagerAbi, signer);
-
-      // 地址检查
-      const tokenManagerAddrFromPoly: string = await poly.getTokenManagerAddress();
-      addLog(`PolyPredictMarket引用的TokenManager地址: ${tokenManagerAddrFromPoly}`);
-      addLog(
-        tokenManagerAddrFromPoly.toLowerCase() === CONTRACT_ADDRESSES.TOKEN_MANAGER.toLowerCase()
-          ? "✅ 地址匹配"
-          : "⚠️ 地址不匹配",
-      );
-
-      // ABI deposit payable check
-      const polyDepositFunc = PolyPredictMarketAbi.find(
-        (i: any) => i.name === "deposit" && i.type === "function",
-      );
-      addLog(
-        polyDepositFunc && polyDepositFunc.stateMutability === "payable"
-          ? "✅ PolyPredictMarket.deposit 是 payable"
-          : "⚠️ deposit 未标记 payable",
-      );
-
-      // 小额交易测试
-      try {
-        const initialBalance: bigint = await token.balances(address);
-        const smallValue = ethers.parseEther("0.0001");
-        const tx = await poly.deposit({ value: smallValue, gasLimit: 200_000 });
-        addLog(`小额交易提交: ${tx.hash}`);
-        await tx.wait();
-        const newBalance: bigint = await token.balances(address);
-        const diff = newBalance - initialBalance;
-        addLog(
-          diff === 0n
-            ? "⚠️ 小额交易后余额无变化"
-            : `✅ 小额交易成功，余额增 ${ethers.formatEther(diff)} ETH`,
-        );
-      } catch (e) {
-        addLog(`小额交易失败: ${(e as Error).message}`);
-      }
-    } catch (err) {
-      addLog(`诊断失败: ${(err as Error).message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // -----------------------------
-  // JSX rendering
-  // -----------------------------
   return (
-    <div className="p-6">
-      <h1 className="text-3xl font-bold mb-4 text-center">Welcome to PolyPredict</h1>
-      <p className="mb-6 text-gray-600 text-center">
-        A decentralized prediction market where you can bet on future outcomes.
-      </p>
-
-      <div className="mb-6 flex justify-center">
-        <WalletConnectButton onConnect={handleWalletConnect} />
-      </div>
-
-      {address && (
-        <div className="text-sm text-gray-500 mb-4 text-center">Connected wallet: {address}</div>
-      )}
-
-      {/* Deposit amount input */}
-      <div className="mb-6 flex justify-center">
-        <div className="max-w-xs w-full">
-          <label className="block text-sm font-medium text-gray-700 mb-1">存款金额 (ETH)</label>
-          <input
-            type="number"
-            min="0.0001"
-            step="0.001"
-            value={depositAmount}
-            onChange={(e) => setDepositAmount(e.target.value)}
-            className="border p-2 rounded w-full"
-          />
-        </div>
-      </div>
-
-      {signer && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6 max-w-4xl mx-auto">
-          <button
-            onClick={fetchContractAddresses}
-            disabled={isLoading}
-            className="p-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400"
-          >
-            测试1: 验证合约地址
-          </button>
-          <button
-            onClick={analyzeContractMethods}
-            disabled={isLoading}
-            className="p-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400"
-          >
-            测试2: 分析合约方法
-          </button>
-          <button
-            onClick={testDirectDeposit}
-            disabled={isLoading}
-            className="p-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400"
-          >
-            测试3: 直接通过TokenManager存款
-          </button>
-          <button
-            onClick={testPolyDeposit}
-            disabled={isLoading}
-            className="p-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:bg-gray-400"
-          >
-            测试4: 通过PolyPredictMarket存款
-          </button>
-          <button
-            onClick={diagnoseContractIssues}
-            disabled={isLoading}
-            className="p-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400"
-          >
-            测试5: 诊断合约交叉调用
-          </button>
-          <button
-            onClick={clearLog}
-            disabled={isLoading || logOutput.length === 0}
-            className="p-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:bg-gray-400"
-          >
-            清除日志
-          </button>
-        </div>
-      )}
-
-      {/* Contract addresses display */}
-      <div className="border rounded-lg p-4 mb-4 max-w-2xl mx-auto">
-        <h2 className="text-lg font-semibold mb-2">合约地址信息</h2>
-        <div className="space-y-2 text-sm">
-          <div>
-            <span className="font-medium">PolyPredictMarket:</span> {contractAddresses.polyPredictMarket}
-          </div>
-          <div>
-            <span className="font-medium">TokenManager:</span> {contractAddresses.tokenManager}
-          </div>
-          <div>
-            <span className="font-medium">PredictionMarket:</span> {contractAddresses.predictionMarket}
-          </div>
-          <div>
-            <span className="font-medium">Exchange:</span> {contractAddresses.exchange}
-          </div>
-          <div>
-            <span className="font-medium">常量中的TOKEN_MANAGER:</span> {CONTRACT_ADDRESSES.TOKEN_MANAGER}
+    <div className="min-h-screen bg-gray-50">
+      {/* Navigation Bar */}
+      <nav className="bg-white shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex">
+              <div className="flex-shrink-0 flex items-center">
+                <span className="text-xl font-bold text-indigo-600">PolyPredict</span>
+              </div>
+              <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
+                <Link href="/" className="border-indigo-500 text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                  Home
+                </Link>
+                <Link href="/markets" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                  Markets
+                </Link>
+                <Link href="/profile" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                  Profile
+                </Link>
+              </div>
+            </div>
+            <div className="flex items-center">
+              <WalletConnectButton onConnect={handleWalletConnect} />
+            </div>
           </div>
         </div>
-      </div>
+      </nav>
 
-      {/* Log output */}
-      {logOutput.length > 0 && (
-        <div className="border rounded-lg p-4 max-w-2xl mx-auto">
-          <h2 className="text-lg font-semibold mb-2">测试日志</h2>
-          <div className="bg-gray-50 p-3 rounded max-h-96 overflow-y-auto">
-            {logOutput.map((log, idx) => {
-              const cls = log.includes("⚠️")
-                ? "text-orange-600 font-semibold"
-                : log.includes("✅")
-                ? "text-green-600 font-semibold"
-                : log.includes("=====")
-                ? "font-bold text-blue-800 mt-2 mb-2"
-                : "";
-              return (
-                <div key={idx} className={`text-xs font-mono mb-1 ${cls}`}>{log}</div>
-              );
-            })}
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        {/* Hero Section */}
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-extrabold text-gray-900 sm:text-5xl md:text-6xl">
+            Welcome to PolyPredict
+          </h1>
+          <p className="mt-3 max-w-md mx-auto text-base text-gray-500 sm:text-lg md:mt-5 md:text-xl md:max-w-3xl">
+            A decentralized prediction market where you can bet on future outcomes with confidence.
+          </p>
+        </div>
+
+        {/* Tutorial Section */}
+        <div className="bg-white shadow overflow-hidden sm:rounded-lg mb-12">
+          <div className="px-4 py-5 sm:px-6">
+            <h3 className="text-lg leading-6 font-medium text-gray-900">
+              How to Use PolyPredict
+            </h3>
+          </div>
+          <div className="px-4 py-5 sm:p-6">
+            <div className="space-y-8">
+              {/* Step 1 */}
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-500 text-white">
+                    1
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h4 className="text-lg font-medium text-gray-900">Connect Your Wallet</h4>
+                  <p className="mt-2 text-base text-gray-500">
+                    Connect your Web3 wallet (like MetaMask) to start trading. Click the "Connect Wallet" button in the top right corner.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-500 text-white">
+                    2
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h4 className="text-lg font-medium text-gray-900">Deposit Funds</h4>
+                  <p className="mt-2 text-base text-gray-500">
+                    Navigate to any market page and deposit ETH to start trading. Your funds will be held securely in the smart contract.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-500 text-white">
+                    3
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h4 className="text-lg font-medium text-gray-900">Browse Markets</h4>
+                  <p className="mt-2 text-base text-gray-500">
+                    Visit the Markets page to see available prediction markets. Each market represents a binary question with Yes/No outcomes.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 4 */}
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-500 text-white">
+                    4
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h4 className="text-lg font-medium text-gray-900">Place Orders</h4>
+                  <p className="mt-2 text-base text-gray-500">
+                    Choose a market and place buy (long) or sell (short) orders. Set your price and amount, then confirm the transaction.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 5 */}
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-500 text-white">
+                    5
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h4 className="text-lg font-medium text-gray-900">Track Performance</h4>
+                  <p className="mt-2 text-base text-gray-500">
+                    Visit your Profile page to view all your orders, positions, and trading history across different markets.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 6 */}
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-500 text-white">
+                    6
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h4 className="text-lg font-medium text-gray-900">Claim Profits</h4>
+                  <p className="mt-2 text-base text-gray-500">
+                    When a market resolves, return to the market page or your profile to claim your profits if your prediction was correct.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      )}
+
+        {/* Quick Links */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Link href="/markets" className="relative group bg-white p-6 focus-within:ring-2 focus-within:ring-inset focus-within:ring-indigo-500 rounded-lg shadow hover:shadow-md transition">
+            <div>
+              <span className="rounded-lg inline-flex p-3 bg-indigo-100 text-indigo-600">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </span>
+            </div>
+            <div className="mt-8">
+              <h3 className="text-lg font-medium">
+                <span className="absolute inset-0" aria-hidden="true"></span>
+                Browse Markets
+              </h3>
+              <p className="mt-2 text-sm text-gray-500">
+                Explore active prediction markets and start trading
+              </p>
+            </div>
+          </Link>
+
+          <Link href="/profile" className="relative group bg-white p-6 focus-within:ring-2 focus-within:ring-inset focus-within:ring-indigo-500 rounded-lg shadow hover:shadow-md transition">
+            <div>
+              <span className="rounded-lg inline-flex p-3 bg-indigo-100 text-indigo-600">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </span>
+            </div>
+            <div className="mt-8">
+              <h3 className="text-lg font-medium">
+                <span className="absolute inset-0" aria-hidden="true"></span>
+                View Profile
+              </h3>
+              <p className="mt-2 text-sm text-gray-500">
+                Check your orders, positions, and trading history
+              </p>
+            </div>
+          </Link>
+
+          <div className="relative group bg-white p-6 rounded-lg shadow">
+            <div>
+              <span className="rounded-lg inline-flex p-3 bg-indigo-100 text-indigo-600">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 13v8m0 0V5m0 16H9" />
+                </svg>
+              </span>
+            </div>
+            <div className="mt-8">
+              <h3 className="text-lg font-medium">
+                Balance: {address ? "0.0 ETH" : "Not Connected"}
+              </h3>
+              <p className="mt-2 text-sm text-gray-500">
+                {address ? "Your current trading balance" : "Connect wallet to view balance"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-white mt-24">
+        <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+          <p className="text-center text-gray-500 text-sm">
+            © 2024 PolyPredict. All rights reserved.
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }
