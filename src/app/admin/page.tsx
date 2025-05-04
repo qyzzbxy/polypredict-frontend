@@ -14,19 +14,22 @@ interface Market {
   resolvedOutcomeIndex: number;
 }
 
-export default function AdminPage() {
-  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
-  const [signer, setSigner] = useState<ethers.Signer | null>(null);
-  const [address, setAddress] = useState<string | null>(null);
+interface ContractMarket {
+  question: string;
+  outcomes: string[];
+  endTime: bigint | number;
+  status: bigint | number;
+  resolvedOutcomeIndex: bigint | number;
+}
 
+export default function AdminPage() {
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-
   const [question, setQuestion] = useState("");
   const [outcomes, setOutcomes] = useState("Yes,No");
   const [duration, setDuration] = useState("86400");
-
   const [markets, setMarkets] = useState<Market[]>([]);
   const [selectedMarketId, setSelectedMarketId] = useState<number | null>(null);
   const [view, setView] = useState<"create" | "resolve" | "cancel">("create");
@@ -58,7 +61,7 @@ export default function AdminPage() {
       for (let i = 1; i <= 20; i++) {
         try {
           console.log(`Loading market ID: ${i}`);
-          const market = await contracts.predictionMarket.getMarket(i);
+          const market: ContractMarket = await contracts.predictionMarket.getMarket(i);
           
           marketsList.push({
             id: i,
@@ -107,6 +110,8 @@ export default function AdminPage() {
     }
   };
 
+  // ...前略保持不变...
+
   const createMarket = async () => {
     if (!contracts || !signer || !question || !duration) {
       alert("Missing inputs or contract");
@@ -128,13 +133,12 @@ export default function AdminPage() {
       setOutcomes("Yes,No");
       setDuration("86400");
       loadMarkets();
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error(error.message);
-      } else {
-        console.error(error);
-      }
-      alert("❌ Failed to create market");
+    } catch (error: unknown) {
+      const errorMessage =
+        (error as any)?.reason ||
+        (error instanceof Error ? error.message : "Unknown error");
+      console.error("❌ Failed to create market:", errorMessage);
+      alert(`❌ Failed to create market: ${errorMessage}`);
     }
   };
 
@@ -143,16 +147,16 @@ export default function AdminPage() {
       alert("Missing inputs or contract");
       return;
     }
-    
+
     const market = markets.find(m => m.id === marketId);
     if (!market) {
       alert("Market not found");
       return;
     }
-    
+
     const currentTime = Math.floor(Date.now() / 1000);
     const isEnded = currentTime >= market.endTime;
-    
+
     if (!isEnded) {
       alert(`❌ Market #${marketId} has not ended yet. End time: ${new Date(market.endTime * 1000).toLocaleString()}`);
       return;
@@ -167,13 +171,12 @@ export default function AdminPage() {
       alert(`✅ Market #${marketId} resolved successfully! Outcome: ${market.outcomes[outcomeIndex]}`);
       setSelectedMarketId(null);
       loadMarkets();
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error(error.message);
-      } else {
-        console.error(error);
-      }
-      alert("❌ Failed to resolve market");
+    } catch (error: unknown) {
+      const errorMessage =
+        (error as any)?.reason ||
+        (error instanceof Error ? error.message : "Unknown error");
+      console.error("❌ Failed to resolve market:", errorMessage);
+      alert(`❌ Failed to resolve market: ${errorMessage}`);
     }
   };
 
@@ -189,17 +192,18 @@ export default function AdminPage() {
       alert(`✅ Market #${marketId} cancelled successfully!`);
       setSelectedMarketId(null);
       loadMarkets();
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error(error.message);
-      } else {
-        console.error(error);
-      }
-      alert("❌ Failed to cancel market");
+    } catch (error: unknown) {
+      const errorMessage =
+        (error as any)?.reason ||
+        (error instanceof Error ? error.message : "Unknown error");
+      console.error("❌ Failed to cancel market:", errorMessage);
+      alert(`❌ Failed to cancel market: ${errorMessage}`);
     }
   };
 
-  const renderMarketList = (action: "resolve" | "cancel") => {
+
+
+  const renderMarketList = () => {
     const filteredMarkets = markets.filter(m => m.status === 0);
     
     if (isLoading) {
@@ -305,10 +309,8 @@ export default function AdminPage() {
       <h1 className="text-2xl font-bold mb-4">Admin Dashboard</h1>
 
       <WalletConnectButton
-        onConnect={(prov, sgnr, addr) => {
-          setProvider(prov);
+        onConnect={(_prov, sgnr, _addr) => {
           setSigner(sgnr);
-          setAddress(addr);
         }}
       />
 
@@ -428,7 +430,7 @@ export default function AdminPage() {
                 Select a market and choose the winning outcome. Only ended markets can be resolved.
               </p>
               
-              {renderMarketList("resolve")}
+              {renderMarketList()}
               {renderMarketActions()}
             </div>
           )}
@@ -439,7 +441,7 @@ export default function AdminPage() {
               <p className="text-sm text-gray-600 mb-4">
                 Select a market to cancel. This will refund all user funds.
               </p>
-              {renderMarketList("cancel")}
+              {renderMarketList()}
               {renderMarketActions()}
             </div>
           )}

@@ -3,6 +3,16 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 
+// Extend the Window interface to include ethereum
+declare global {
+  interface Window {
+    ethereum?: {
+      request: (args: { method: string; params?: any[] }) => Promise<any>;
+      on: (event: string, callback: () => void) => void;
+    };
+  }
+}
+
 export default function WalletConnectButton({
   onConnect
 }: {
@@ -30,7 +40,7 @@ export default function WalletConnectButton({
   };
 
   useEffect(() => {
-    if (typeof window.ethereum !== "undefined") {
+    if (typeof window !== 'undefined' && window.ethereum) {
       window.ethereum.on("accountsChanged", () => window.location.reload());
     }
   }, []);

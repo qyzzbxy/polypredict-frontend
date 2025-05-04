@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
 import WalletConnectButton from "@/components/ui/WalletConnectButton";
@@ -10,8 +9,8 @@ export default function HomePage() {
   const [address, setAddress] = useState<string | null>(null);
 
   const handleWalletConnect = (
-    prov: ethers.BrowserProvider,
-    sgnr: ethers.Signer,
+    _prov: ethers.BrowserProvider,
+    _sgnr: ethers.Signer,
     addr: string,
   ) => {
     setAddress(addr);

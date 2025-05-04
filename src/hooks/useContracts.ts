@@ -13,22 +13,22 @@ export function useContracts(providerOrSigner: ethers.Provider | ethers.Signer |
     return {
       polyPredictMarket: new ethers.Contract(
         CONTRACT_ADDRESSES.POLY_PREDICT_MARKET,
-        PolyPredictMarketAbi,
+        PolyPredictMarketAbi as ethers.InterfaceAbi,
         providerOrSigner
       ),
       predictionMarket: new ethers.Contract(
         CONTRACT_ADDRESSES.PREDICTION_MARKET,
-        PredictionMarketAbi,
+        PredictionMarketAbi as ethers.InterfaceAbi,
         providerOrSigner
       ),
       clobExchange: new ethers.Contract(
         CONTRACT_ADDRESSES.CLOB_EXCHANGE,
-        CLOBExchangeAbi,
+        CLOBExchangeAbi as ethers.InterfaceAbi,
         providerOrSigner
       ),
       tokenManager: new ethers.Contract(
         CONTRACT_ADDRESSES.TOKEN_MANAGER,
-        TokenManagerAbi,
+        TokenManagerAbi as ethers.InterfaceAbi,
         providerOrSigner
       )
     };

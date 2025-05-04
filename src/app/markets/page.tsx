@@ -6,17 +6,35 @@ import { ethers } from "ethers";
 import { useContracts } from "@/hooks/useContracts";
 import WalletConnectButton from "@/components/ui/WalletConnectButton";
 
+interface Market {
+  id: number;
+  question: string;
+  outcomes: string[];
+  endTime: number;
+  status: number;
+  resolved: boolean;
+  cancelled: boolean;
+  outcomeIndex: number;
+}
+
+interface ContractMarket {
+  question: string;
+  outcomes: string[];
+  endTime: bigint | number;
+  status: bigint | number;
+  resolvedOutcomeIndex: bigint | number;
+}
+
 export default function MarketsPage() {
-  const [provider, setProvider] = useState(null);
-  const [signer, setSigner] = useState(null);
-  const [address, setAddress] = useState(null);
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
+  const [address, setAddress] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [error, setError] = useState(null);
-  const [markets, setMarkets] = useState([]);
+  const [error, setError] = useState<string | null>(null);
+  const [markets, setMarkets] = useState<Market[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [showCancelledMarkets, setShowCancelledMarkets] = useState(false); // 默认关闭
-  const [showResolvedMarkets, setShowResolvedMarkets] = useState(false); // 默认关闭
+  const [showCancelledMarkets, setShowCancelledMarkets] = useState(false);
+  const [showResolvedMarkets, setShowResolvedMarkets] = useState(false);
   
   // Default market parameters
   const DEFAULT_QUESTION = "Will ETH price exceed $5,000 by the end of 2025?";
@@ -39,7 +57,7 @@ export default function MarketsPage() {
 
     try {
       // Try to get markets with IDs starting from 1
-      const marketsList = [];
+      const marketsList: Market[] = [];
       let id = 1;
       let firstNonExisting = false;
       
@@ -47,7 +65,7 @@ export default function MarketsPage() {
         try {
           console.log(`Attempting to load market ID: ${id}`);
           // Use your contract's getMarket function from PredictionMarket.sol
-          const market = await contracts.predictionMarket.getMarket(id);
+          const market: ContractMarket = await contracts.predictionMarket.getMarket(id);
           
           console.log(`Market ${id} data:`, market);
           console.log(`Market ${id} status:`, Number(market.status));
@@ -84,7 +102,8 @@ export default function MarketsPage() {
       }
     } catch (error) {
       console.error("Failed to load markets:", error);
-      setError(`Failed to load markets: ${error.message || "Unknown error"}`);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      setError(`Failed to load markets: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
@@ -123,7 +142,8 @@ export default function MarketsPage() {
       
     } catch (error) {
       console.error("Failed to create market:", error);
-      const errorMessage = error.reason || error.message || "Unknown error";
+      const errorReason = error?.reason || (error instanceof Error ? error.message : undefined);
+      const errorMessage = errorReason || "Unknown error";
       setError(`Failed to create market: ${errorMessage}`);
     } finally {
       setIsCreating(false);
@@ -143,20 +163,19 @@ export default function MarketsPage() {
   };
 
   // Handle wallet connection
-  const handleWalletConnect = (prov, sgnr, addr) => {
+  const handleWalletConnect = (_prov: ethers.BrowserProvider, sgnr: ethers.Signer, addr: string) => {
     console.log("Wallet connected:", addr);
-    setProvider(prov);
     setSigner(sgnr);
     setAddress(addr);
   };
 
   // Load markets and check admin status when signer changes
   useEffect(() => {
-    if (signer) {
+    if (signer && contracts) {
       loadMarkets();
       checkAdminStatus();
     }
-  }, [signer]);
+  }, [signer, contracts]);
 
   // 添加一个刷新按钮的处理函数
   const handleRefresh = () => {

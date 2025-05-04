@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -39,7 +38,7 @@ export default function ProfilePage() {
   // User data state
   const [userBalance, setUserBalance] = useState<bigint>(0n);
   const [userOrders, setUserOrders] = useState<Order[]>([]);
-  const [positions, setPositions] = useState<any[]>([]);
+  const [positions, setPositions] = useState<Array<[number, number]>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
@@ -94,7 +93,8 @@ export default function ProfilePage() {
       
       return contract;
     } catch (e) {
-      addDebugLog("Error getting Exchange contract", { error: e }, e.message);
+      const error = e as Error;
+      addDebugLog("Error getting Exchange contract", { error: e }, error.message);
       return null;
     }
   };
@@ -114,8 +114,9 @@ export default function ProfilePage() {
       setUserBalance(balance);
       addDebugLog("Loaded user balance", { balance: balance.toString() });
     } catch (e) {
+      const error = e as Error;
       console.error("Failed to load balance:", e);
-      addDebugLog("Failed to load balance", {}, e.message);
+      addDebugLog("Failed to load balance", {}, error.message);
     }
   };
 
@@ -148,7 +149,8 @@ export default function ProfilePage() {
           tokenManagerAddress: tokenManagerAddr
         });
       } catch (e) {
-        addDebugLog("Step 1: Error getting addresses", {}, e.message);
+        const error = e as Error;
+        addDebugLog("Step 1: Error getting addresses", {}, error.message);
       }
     }
   };
@@ -175,7 +177,7 @@ export default function ProfilePage() {
       const orderIds = await exchange.getUserOrders(address);
       addDebugLog("Step 2: getUserOrders result", {
         orderIdsLength: orderIds ? orderIds.length : 0,
-        orderIds: orderIds ? orderIds.map(id => id.toString()) : []
+        orderIds: orderIds ? orderIds.map((id: any) => id.toString()) : []
       });
 
       // Check individual orders
@@ -192,13 +194,15 @@ export default function ProfilePage() {
               filled: order.filled.toString()
             });
           } catch (e) {
-            addDebugLog(`Step 2: Error getting order ${orderIds[i]}`, {}, e.message);
+            const error = e as Error;
+            addDebugLog(`Step 2: Error getting order ${orderIds[i]}`, {}, error.message);
           }
         }
       }
 
     } catch (e) {
-      addDebugLog("Step 2: getUserOrders failed", { error: e }, e.message);
+      const error = e as Error;
+      addDebugLog("Step 2: getUserOrders failed", { error: e }, error.message);
     }
   };
 
@@ -216,22 +220,23 @@ export default function ProfilePage() {
       
       addDebugLog("Step 3: OrderPlaced events", {
         eventCount: events.length,
-        filter: filter.fragment?.inputs[1].name // Should show "trader"
+        filter: filter?.fragment?.inputs?.[1]?.name
       });
 
       // Show first few events
       events.slice(0, 3).forEach((event, index) => {
         addDebugLog(`Step 3: Event ${index}`, {
-          orderId: event.args.orderId.toString(),
-          marketId: event.args.marketId.toString(),
-          trader: event.args.trader,
-          isBuy: event.args.isBuy,
+          orderId: event.args?.orderId.toString(),
+          marketId: event.args?.marketId.toString(),
+          trader: event.args?.trader,
+          isBuy: event.args?.isBuy,
           blockNumber: event.blockNumber
         });
       });
 
     } catch (e) {
-      addDebugLog("Step 3: Events check failed", {}, e.message);
+      const error = e as Error;
+      addDebugLog("Step 3: Events check failed", {}, error.message);
     }
   };
 
@@ -306,7 +311,7 @@ export default function ProfilePage() {
       });
       
       const positionResults = await Promise.all(positionPromises);
-      const validPositions = positionResults.filter(p => p !== null);
+      const validPositions = positionResults.filter((p): p is [number, number] => p !== null);
       setPositions(validPositions);
       
     } catch (e) {
@@ -322,9 +327,9 @@ export default function ProfilePage() {
       loadUserBalance();
       loadUserOrders();
     }
-  }, [signer, address]);
+  }, [signer, address, contracts]);
 
-  const onConnect = (prov: ethers.BrowserProvider, sgnr: ethers.Signer, addr: string) => {
+  const onConnect = (_prov: ethers.BrowserProvider, sgnr: ethers.Signer, addr: string) => {
     setSigner(sgnr);
     setAddress(addr);
   };
