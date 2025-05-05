@@ -22,13 +22,6 @@ interface Order {
   trader: string;
 }
 
-interface DebugLog {
-  step: string;
-  data: any;
-  error?: string;
-  timestamp: string;
-}
-
 export default function ProfilePage() {
   const router = useRouter();
   const [signer, setSigner] = useState<ethers.Signer | null>(null);
@@ -41,223 +34,41 @@ export default function ProfilePage() {
   const [positions, setPositions] = useState<Array<[number, number]>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
-  const [showDebug, setShowDebug] = useState(false);
 
   const formatEth = (wei: bigint | string) => ethers.formatEther(wei);
   const formatGwei = (wei: bigint | string) => ethers.formatUnits(wei, 'gwei');
 
-  // Debug logging function
-  const addDebugLog = (step: string, data: any, error?: string) => {
-    const newLog: DebugLog = {
-      step,
-      data,
-      error,
-      timestamp: new Date().toLocaleTimeString()
-    };
-    setDebugLogs(prev => [...prev, newLog]);
-  };
-
   /* --- Contract Resolution --- */
   const getPolyPredictContract = () => {
-    addDebugLog("Resolving PolyPredict Contract", {
-      hasContractsHook: !!contracts?.polyPredictMarket,
-      hasSigner: !!signer,
-      contractAddress: CONTRACT_ADDRESSES.POLY_PREDICT_MARKET
-    });
-
     if (!contracts?.polyPredictMarket && signer) {
-      const contract = new ethers.Contract(CONTRACT_ADDRESSES.POLY_PREDICT_MARKET, PolyPredictMarketAbi, signer);
-      addDebugLog("Created direct PolyPredict contract", { address: contract.address });
-      return contract;
+      return new ethers.Contract(CONTRACT_ADDRESSES.POLY_PREDICT_MARKET, PolyPredictMarketAbi, signer);
     }
     return contracts?.polyPredictMarket;
   };
 
   const getExchangeContract = async () => {
     const polyPredict = getPolyPredictContract();
-    if (!polyPredict) {
-      addDebugLog("Failed to get PolyPredict contract", {}, "No PolyPredict contract");
-      return null;
-    }
+    if (!polyPredict) return null;
     
     try {
       const exchangeAddress = await polyPredict.getExchangeAddress();
-      addDebugLog("Got Exchange Address", { address: exchangeAddress });
-      
-      const contract = new ethers.Contract(exchangeAddress, CLOBExchangeAbi, signer);
-      addDebugLog("Created Exchange contract", { 
-        address: contract.address,
-        abi: "CLOBExchangeAbi loaded"
-      });
-      
-      return contract;
+      return new ethers.Contract(exchangeAddress, CLOBExchangeAbi, signer);
     } catch (e) {
-      const error = e as Error;
-      addDebugLog("Error getting Exchange contract", { error: e }, error.message);
+      console.error("Error getting Exchange contract:", e);
       return null;
     }
   };
 
   /* --- Data Loading --- */
   const loadUserBalance = async () => {
-    if (!address || !contracts?.tokenManager) {
-      addDebugLog("Cannot load user balance", {
-        hasAddress: !!address,
-        hasTokenManager: !!contracts?.tokenManager
-      });
-      return;
-    }
+    if (!address || !contracts?.tokenManager) return;
 
     try {
       const balance = await contracts.tokenManager.getAvailableBalance(address);
       setUserBalance(balance);
-      addDebugLog("Loaded user balance", { balance: balance.toString() });
     } catch (e) {
-      const error = e as Error;
       console.error("Failed to load balance:", e);
-      addDebugLog("Failed to load balance", {}, error.message);
     }
-  };
-
-  // Step 1: Check contracts and address
-  const debugStep1_VerifyContracts = async () => {
-    const polyPredict = getPolyPredictContract();
-    
-    const debugInfo = {
-      address: address,
-      hasSigner: !!signer,
-      hasPolyPredict: !!polyPredict,
-      polyPredictAddress: polyPredict?.address,
-      CONTRACT_ADDRESSES: CONTRACT_ADDRESSES,
-      contracts: {
-        polyPredictMarket: !!contracts?.polyPredictMarket,
-        tokenManager: !!contracts?.tokenManager,
-        predictionMarket: !!contracts?.predictionMarket
-      }
-    };
-    
-    addDebugLog("Step 1: Verify Contracts", debugInfo);
-    
-    if (polyPredict) {
-      try {
-        const exchangeAddr = await polyPredict.getExchangeAddress();
-        const tokenManagerAddr = await polyPredict.getTokenManagerAddress();
-        
-        addDebugLog("Step 1: Contract Addresses", {
-          exchangeAddress: exchangeAddr,
-          tokenManagerAddress: tokenManagerAddr
-        });
-      } catch (e) {
-        const error = e as Error;
-        addDebugLog("Step 1: Error getting addresses", {}, error.message);
-      }
-    }
-  };
-
-  // Step 2: Check if getUserOrders exists and works
-  const debugStep2_CheckUserOrders = async () => {
-    if (!address) {
-      addDebugLog("Step 2: No address", {}, "Address not set");
-      return;
-    }
-
-    const exchange = await getExchangeContract();
-    if (!exchange) {
-      addDebugLog("Step 2: No exchange contract", {}, "Failed to get exchange");
-      return;
-    }
-
-    try {
-      // Test if getUserOrders exists
-      const hasFunction = typeof exchange.getUserOrders === 'function';
-      addDebugLog("Step 2: getUserOrders exists", { hasFunction });
-
-      // Call getUserOrders
-      const orderIds = await exchange.getUserOrders(address);
-      addDebugLog("Step 2: getUserOrders result", {
-        orderIdsLength: orderIds ? orderIds.length : 0,
-        orderIds: orderIds ? orderIds.map((id: any) => id.toString()) : []
-      });
-
-      // Check individual orders
-      if (orderIds && orderIds.length > 0) {
-        for (let i = 0; i < Math.min(3, orderIds.length); i++) {
-          try {
-            const order = await exchange.getOrder(orderIds[i]);
-            addDebugLog(`Step 2: Order ${orderIds[i]}`, {
-              id: order.id.toString(),
-              trader: order.trader,
-              isActive: order.isActive,
-              isResolved: order.isResolved,
-              amount: order.amount.toString(),
-              filled: order.filled.toString()
-            });
-          } catch (e) {
-            const error = e as Error;
-            addDebugLog(`Step 2: Error getting order ${orderIds[i]}`, {}, error.message);
-          }
-        }
-      }
-
-    } catch (e) {
-      const error = e as Error;
-      addDebugLog("Step 2: getUserOrders failed", { error: e }, error.message);
-    }
-  };
-
-  // Step 3: Check events
-  const debugStep3_CheckEvents = async () => {
-    if (!address) return;
-
-    const exchange = await getExchangeContract();
-    if (!exchange) return;
-
-    try {
-      // Check OrderPlaced events for user
-      const filter = exchange.filters.OrderPlaced(null, address);
-      const events = await exchange.queryFilter(filter, -1000); // Last 1000 blocks
-      
-      addDebugLog("Step 3: OrderPlaced events", {
-        eventCount: events.length,
-        filter: filter?.fragment?.inputs?.[1]?.name
-      });
-
-      // Show first few events
-      events.slice(0, 3).forEach((event, index) => {
-        addDebugLog(`Step 3: Event ${index}`, {
-          orderId: event.args?.orderId.toString(),
-          marketId: event.args?.marketId.toString(),
-          trader: event.args?.trader,
-          isBuy: event.args?.isBuy,
-          blockNumber: event.blockNumber
-        });
-      });
-
-    } catch (e) {
-      const error = e as Error;
-      addDebugLog("Step 3: Events check failed", {}, error.message);
-    }
-  };
-
-  // Main debug function
-  const runFullDiagnostic = async () => {
-    setDebugLogs([]); // Clear previous logs
-    setShowDebug(true);
-    
-    addDebugLog("Starting Diagnostic", {
-      timestamp: new Date().toISOString(),
-      address: address,
-      signer: !!signer
-    });
-
-    await debugStep1_VerifyContracts();
-    await debugStep2_CheckUserOrders();
-    await debugStep3_CheckEvents();
-    
-    addDebugLog("Diagnostic Complete", {
-      totalLogs: debugLogs.length + 1
-    });
   };
 
   const loadUserOrders = async () => {
@@ -336,151 +147,164 @@ export default function ProfilePage() {
 
   /* --- Render --- */
   return (
-    <div className="p-6 space-y-8 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <button onClick={() => router.back()} className="text-sm text-blue-500">← Back</button>
-          <h1 className="text-2xl font-bold mt-2">Profile</h1>
-        </div>
-        <WalletConnectButton onConnect={onConnect} />
-      </div>
-
-      {/* Debug Button */}
-      <div className="border rounded p-4 bg-yellow-50">
-        <button 
-          onClick={runFullDiagnostic}
-          className="p-2 bg-yellow-600 text-white rounded"
-        >
-          Run Full Diagnostic
-        </button>
-        {showDebug && (
-          <button 
-            onClick={() => setShowDebug(false)}
-            className="ml-2 p-2 bg-gray-600 text-white rounded"
-          >
-            Hide Debug Logs
-          </button>
-        )}
-      </div>
-
-      {/* Debug Logs */}
-      {showDebug && (
-        <div className="border rounded p-4 bg-gray-50 max-h-96 overflow-y-auto">
-          <h3 className="font-semibold mb-2">Debug Logs:</h3>
-          <pre className="whitespace-pre-wrap text-xs">
-            {debugLogs.map((log, index) => (
-              <div key={index} className={`mb-2 ${log.error ? 'text-red-600' : 'text-gray-800'}`}>
-                <strong>[{log.timestamp}] {log.step}:</strong>
-                {'\n'}
-                {JSON.stringify(log.data, null, 2)}
-                {log.error && '\nERROR: ' + log.error}
-                {'\n'}
-                {'='.repeat(50)}
-              </div>
-            ))}
-          </pre>
-        </div>
-      )}
-
-      {/* Wallet Info */}
-      <div className="border rounded p-4">
-        <h2 className="text-lg font-semibold mb-2">Wallet Information</h2>
-        {address ? (
-          <div className="space-y-2">
-            <p><span className="font-semibold">Address:</span> {address.slice(0, 6)}...{address.slice(-4)}</p>
-            <p><span className="font-semibold">Balance:</span> {formatEth(userBalance)} ETH</p>
-          </div>
-        ) : (
-          <p className="text-gray-500">Please connect your wallet</p>
-        )}
-      </div>
-
-      {/* Positions Summary */}
-      <div className="border rounded p-4">
-        <h2 className="text-lg font-semibold mb-2">Positions</h2>
-        {loading ? (
-          <p>Loading...</p>
-        ) : positions.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {positions.map(([marketId, position]) => (
-              <div 
-                key={marketId} 
-                className={`p-3 rounded border ${position > 0 ? 'border-green-200 bg-green-50' : position < 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 py-12">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="space-y-8">
+          {/* Header */}
+          <div className="flex justify-between items-center">
+            <div>
+              <button 
+                onClick={() => router.back()} 
+                className="inline-flex items-center text-sm text-indigo-600 hover:text-indigo-800 font-medium mb-4"
               >
-                <p className="font-semibold">Market #{marketId}</p>
-                <p className={`${position > 0 ? 'text-green-600' : position < 0 ? 'text-red-600' : ''}`}>
-                  Position: {position} {position > 0 ? '(Long)' : position < 0 ? '(Short)' : '(No Position)'}
-                </p>
+                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Back
+              </button>
+              <h1 className="text-4xl font-bold text-gray-900">Your Profile</h1>
+              <p className="text-lg text-gray-600 mt-2">View your trading activity and positions</p>
+            </div>
+            <WalletConnectButton onConnect={onConnect} />
+          </div>
+
+          {/* Wallet Info */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Wallet Information</h2>
+            {address ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Wallet Address</p>
+                  <p className="text-lg text-gray-900 font-mono">{address.slice(0, 6)}...{address.slice(-4)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Available Balance</p>
+                  <p className="text-3xl font-bold text-gray-900">{formatEth(userBalance)} ETH</p>
+                </div>
               </div>
-            ))}
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-gray-500">Please connect your wallet to view your profile</p>
+              </div>
+            )}
           </div>
-        ) : (
-          <p className="text-gray-500">No positions</p>
-        )}
-      </div>
 
-      {/* Orders History */}
-      <div className="border rounded p-4">
-        <h2 className="text-lg font-semibold mb-2">Order History</h2>
-        {loading ? (
-          <p>Loading...</p>
-        ) : userOrders.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left p-2">Order ID</th>
-                  <th className="text-left p-2">Market</th>
-                  <th className="text-left p-2">Type</th>
-                  <th className="text-left p-2">Price</th>
-                  <th className="text-left p-2">Amount</th>
-                  <th className="text-left p-2">Filled</th>
-                  <th className="text-left p-2">Status</th>
-                  <th className="text-left p-2">Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {userOrders.map(order => (
-                  <tr key={order.id} className="border-b hover:bg-gray-50">
-                    <td className="p-2">{order.id}</td>
-                    <td className="p-2">
-                      <button 
-                        onClick={() => router.push(`/markets/${order.marketId}`)}
-                        className="text-blue-500 hover:underline"
-                      >
-                        #{order.marketId}
-                      </button>
-                    </td>
-                    <td className="p-2">
-                      <span className={`font-semibold ${order.isBuy ? 'text-green-600' : 'text-red-600'}`}>
-                        {order.isBuy ? 'Buy' : 'Sell'}
+          {/* Positions Summary */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Your Positions</h2>
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent"></div>
+                <span className="ml-3 text-gray-600">Loading...</span>
+              </div>
+            ) : positions.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {positions.map(([marketId, position]) => (
+                  <div 
+                    key={marketId} 
+                    className={`p-6 rounded-lg border-2 transition-all ${
+                      position > 0 ? 'border-green-200 bg-green-50' : 
+                      position < 0 ? 'border-red-200 bg-red-50' : 
+                      'border-gray-200 bg-gray-50'
+                    }`}
+                  >
+                    <p className="text-lg font-semibold text-gray-900 mb-2">Market #{marketId}</p>
+                    <p className={`text-xl font-bold ${
+                      position > 0 ? 'text-green-600' : 
+                      position < 0 ? 'text-red-600' : 
+                      'text-gray-900'
+                    }`}>
+                      Position: {position}
+                      <span className="text-sm font-medium ml-2">
+                        {position > 0 ? '(Long)' : position < 0 ? '(Short)' : ''}
                       </span>
-                    </td>
-                    <td className="p-2">{formatGwei(order.price)} gwei</td>
-                    <td className="p-2">{order.amount.toString()}</td>
-                    <td className="p-2">{order.filled.toString()}</td>
-                    <td className="p-2">
-                      <span className={`text-xs px-2 py-1 rounded ${
-                        order.isResolved ? 'bg-purple-100 text-purple-800' :
-                        order.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100'
-                      }`}>
-                        {order.isResolved ? 'Settled' : order.isActive ? 'Active' : 'Completed'}
-                      </span>
-                    </td>
-                    <td className="p-2">{new Date(order.timestamp * 1000).toLocaleDateString()}</td>
-                  </tr>
+                    </p>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-gray-500">No active positions</p>
+              </div>
+            )}
           </div>
-        ) : (
-          <p className="text-gray-500">No orders found</p>
-        )}
-      </div>
 
-      {/* Error Message */}
-      {error && <div className="text-red-600 p-3 bg-red-50 rounded">Error: {error}</div>}
+          {/* Orders History */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Order History</h2>
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent"></div>
+                <span className="ml-3 text-gray-600">Loading...</span>
+              </div>
+            ) : userOrders.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Order ID</th>
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Market</th>
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Type</th>
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Price</th>
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Amount</th>
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Filled</th>
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Status</th>
+                      <th className="text-left p-4 text-sm font-medium text-gray-600">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {userOrders.map(order => (
+                      <tr key={order.id} className="border-b border-gray-100 hover:bg-gray-50 transition">
+                        <td className="p-4 text-gray-900">{order.id}</td>
+                        <td className="p-4">
+                          <button 
+                            onClick={() => router.push(`/markets/${order.marketId}`)}
+                            className="text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            #{order.marketId}
+                          </button>
+                        </td>
+                        <td className="p-4">
+                          <span className={`inline-flex px-3 py-1 rounded-full text-sm font-medium ${
+                            order.isBuy ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {order.isBuy ? 'Buy' : 'Sell'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-gray-900">{formatGwei(order.price)} gwei</td>
+                        <td className="p-4 text-gray-900">{order.amount.toString()}</td>
+                        <td className="p-4 text-gray-900">{order.filled.toString()}</td>
+                        <td className="p-4">
+                          <span className={`inline-flex px-3 py-1 rounded-full text-sm font-medium ${
+                            order.isResolved ? 'bg-purple-100 text-purple-700' :
+                            order.isActive ? 'bg-green-100 text-green-700' : 
+                            'bg-gray-100 text-gray-700'
+                          }`}>
+                            {order.isResolved ? 'Settled' : order.isActive ? 'Active' : 'Completed'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-gray-900">{new Date(order.timestamp * 1000).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-gray-500">No orders found</p>
+              </div>
+            )}
+          </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-6 rounded-lg shadow-sm">
+              <p className="font-medium">Error</p>
+              <p>{error}</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

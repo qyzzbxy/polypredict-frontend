@@ -6,7 +6,7 @@ import MainLayout from "@/components/MainLayout";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "PolyPredict",
+  title: "Ubet",
   description: "Decentralized prediction market",
 };
 

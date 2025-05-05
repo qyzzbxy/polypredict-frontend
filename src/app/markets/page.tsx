@@ -204,143 +204,170 @@ export default function MarketsPage() {
   const filteredMarkets = getFilteredMarkets();
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Prediction Markets</h1>
-      
-      <div className="mb-6">
-        <WalletConnectButton onConnect={handleWalletConnect} />
-        
-        {address && (
-          <div className="mt-2 text-sm text-gray-600">
-            Connected: {address.substring(0, 6)}...{address.substring(address.length - 4)}
-            {isAdmin && <span className="ml-2 bg-blue-100 text-blue-800 text-xs font-medium px-2 py-0.5 rounded">Admin</span>}
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4">
-          <p>{error}</p>
-        </div>
-      )}
-
-      {/* Market filter toggles */}
-      {markets.length > 0 && (
-        <div className="flex mb-4 items-center">
-          <label className="inline-flex items-center cursor-pointer mr-6">
-            <input
-              type="checkbox"
-              checked={showCancelledMarkets}
-              onChange={() => setShowCancelledMarkets(!showCancelledMarkets)}
-              className="sr-only peer"
-            />
-            <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            <span className="ml-3 text-sm font-medium text-gray-900">Show Cancelled Markets</span>
-          </label>
-          
-          <label className="inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showResolvedMarkets}
-              onChange={() => setShowResolvedMarkets(!showResolvedMarkets)}
-              className="sr-only peer"
-            />
-            <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            <span className="ml-3 text-sm font-medium text-gray-900">Show Resolved Markets</span>
-          </label>
-          
-          <button
-            onClick={handleRefresh}
-            className="ml-auto bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-1 px-3 rounded text-sm"
-          >
-            Refresh Markets
-          </button>
-        </div>
-      )}
-
-      {isAdmin && markets.length === 0 && !isLoading && (
-        <div className="mb-6">
-          <button
-            onClick={createDefaultMarket}
-            disabled={isCreating}
-            className={`bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded ${isCreating ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {isCreating ? 'Creating Market...' : 'Create Default Market'}
-          </button>
-          <p className="mt-2 text-sm text-gray-600">
-            As an admin, you can create a default market to get started
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header Section */}
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            Prediction Markets
+          </h1>
+          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            Trade on the outcomes of future events with Ubet's decentralized prediction markets
           </p>
         </div>
-      )}
-
-      {isLoading ? (
-        <div className="text-center py-8">
-          <p>Loading markets...</p>
-        </div>
-      ) : (
-        <>
-          {filteredMarkets.length === 0 && !isLoading ? (
-            <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4">
-              <p>No markets found. Connect your wallet{isAdmin ? ' and create a market' : ' or check back later'}.</p>
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {filteredMarkets.map((market) => (
-                <Link 
-                  href={`/markets/${market.id}`}
-                  key={market.id}
-                  className={`block border rounded shadow hover:shadow-md transition-shadow ${market.status === 2 ? 'opacity-70 border-red-300' : ''}`}
-                >
-                  <div className="p-4">
-                    <h2 className="text-lg font-semibold mb-2 line-clamp-2">
-                      {market.question}
-                      {market.status === 2 && (
-                        <span className="ml-2 bg-red-100 text-red-800 text-xs font-medium px-2 py-0.5 rounded">Cancelled</span>
-                      )}
-                    </h2>
-                    <div className="flex justify-between text-sm">
-                      <span className={
-                        market.status === 1 ? 'text-green-600' : 
-                        market.status === 2 ? 'text-red-600' : 
-                        'text-blue-600'
-                      }>
-                        {market.status === 1 
-                          ? `Resolved: ${market.outcomes[market.outcomeIndex]}` 
-                          : market.status === 2
-                            ? "Cancelled"
-                            : "Active"}
-                      </span>
-                      <span>
-                        {new Date(market.endTime * 1000).toLocaleDateString()}
-                      </span>
-                    </div>
-                    
-                    {market.status === 2 && (
-                      <div className="mt-2 text-xs text-red-600">
-                        This market has been cancelled by the admin. All funds have been returned.
-                      </div>
-                    )}
-                  </div>
-                </Link>
-              ))}
+        
+        {/* Wallet Connection & Status */}
+        <div className="flex flex-col items-center mb-8">
+          <WalletConnectButton onConnect={handleWalletConnect} />
+          
+          {address && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="text-sm text-gray-600">
+                Connected: {address.substring(0, 6)}...{address.substring(address.length - 4)}
+              </span>
+              {isAdmin && (
+                <span className="bg-indigo-100 text-indigo-700 text-xs font-medium px-3 py-1 rounded-full">
+                  Admin
+                </span>
+              )}
             </div>
           )}
+        </div>
 
-          <div className="mt-8 text-center">
-            <p className="text-sm text-gray-500">
-              Click on any market to view details and place orders
-              {(!showCancelledMarkets || !showResolvedMarkets) && (
-                <>
-                  <br />
-                  <span className="text-gray-400">
-                    {markets.filter(m => (!showCancelledMarkets && m.status === 2) || (!showResolvedMarkets && m.status === 1)).length} markets are hidden. Toggle the switches above to view them.
-                  </span>
-                </>
-              )}
+        {error && (
+          <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-lg shadow-sm">
+            <p className="font-medium">{error}</p>
+          </div>
+        )}
+
+        {/* Market filter toggles */}
+        {markets.length > 0 && (
+          <div className="flex flex-wrap items-center justify-center mb-8 gap-4">
+            <label className="inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showCancelledMarkets}
+                onChange={() => setShowCancelledMarkets(!showCancelledMarkets)}
+                className="sr-only peer"
+              />
+              <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              <span className="ml-3 text-sm font-medium text-gray-700">Show Cancelled Markets</span>
+            </label>
+            
+            <label className="inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showResolvedMarkets}
+                onChange={() => setShowResolvedMarkets(!showResolvedMarkets)}
+                className="sr-only peer"
+              />
+              <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              <span className="ml-3 text-sm font-medium text-gray-700">Show Resolved Markets</span>
+            </label>
+            
+            <button
+              onClick={handleRefresh}
+              className="ml-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg transition-colors shadow-sm"
+            >
+              Refresh Markets
+            </button>
+          </div>
+        )}
+
+        {isAdmin && markets.length === 0 && !isLoading && (
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-8 mb-8 text-center">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              No markets found
+            </h3>
+            <button
+              onClick={createDefaultMarket}
+              disabled={isCreating}
+              className={`bg-green-600 hover:bg-green-700 text-white font-medium py-3 px-6 rounded-lg transition-all shadow-md hover:shadow-lg ${isCreating ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {isCreating ? 'Creating Market...' : 'Create Default Market'}
+            </button>
+            <p className="mt-4 text-sm text-gray-600">
+              As an admin, you can create a default market to get started
             </p>
           </div>
-        </>
-      )}
+        )}
+
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center py-16">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-600 border-t-transparent mb-4"></div>
+            <p className="text-gray-600">Loading markets...</p>
+          </div>
+        ) : (
+          <>
+            {filteredMarkets.length === 0 && !isLoading ? (
+              <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700 p-6 rounded-lg shadow-sm">
+                <p className="font-medium">No markets found</p>
+                <p className="mt-1">Connect your wallet{isAdmin ? ' and create a market' : ' or check back later'}.</p>
+              </div>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                {filteredMarkets.map((market) => (
+                  <Link 
+                    href={`/markets/${market.id}`}
+                    key={market.id}
+                    className={`block rounded-xl shadow-sm hover:shadow-lg transition-all ${
+                      market.status === 2 ? 'opacity-70 border-2 border-red-200' : 'border border-gray-200'
+                    }`}
+                  >
+                    <div className="p-6 bg-white rounded-xl">
+                      <h2 className="text-lg font-semibold mb-3 line-clamp-2 text-gray-900">
+                        {market.question}
+                        {market.status === 2 && (
+                          <span className="ml-2 bg-red-100 text-red-800 text-xs font-medium px-2 py-1 rounded-full">
+                            Cancelled
+                          </span>
+                        )}
+                      </h2>
+                      
+                      <div className="flex justify-between items-center text-sm">
+                        <span className={`font-medium px-3 py-1 rounded-full ${
+                          market.status === 1 ? 'bg-green-100 text-green-700' : 
+                          market.status === 2 ? 'bg-red-100 text-red-700' : 
+                          'bg-indigo-100 text-indigo-700'
+                        }`}>
+                          {market.status === 1 
+                            ? `Resolved: ${market.outcomes[market.outcomeIndex]}` 
+                            : market.status === 2
+                              ? "Cancelled"
+                              : "Active"}
+                        </span>
+                        <span className="text-gray-600">
+                          {new Date(market.endTime * 1000).toLocaleDateString()}
+                        </span>
+                      </div>
+                      
+                      {market.status === 2 && (
+                        <div className="mt-3 text-xs text-red-600 bg-red-50 p-2 rounded">
+                          This market has been cancelled by the admin. All funds have been returned.
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-12 text-center">
+              <p className="text-sm text-gray-500">
+                Click on any market to view details and place orders
+                {(!showCancelledMarkets || !showResolvedMarkets) && (
+                  <>
+                    <br />
+                    <span className="text-gray-400">
+                      {markets.filter(m => (!showCancelledMarkets && m.status === 2) || (!showResolvedMarkets && m.status === 1)).length} markets are hidden. Toggle the switches above to view them.
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
